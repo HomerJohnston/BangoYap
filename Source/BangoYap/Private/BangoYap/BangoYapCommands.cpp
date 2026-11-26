@@ -6,8 +6,11 @@
 //   Conversation(Name) { ... }                                      speech in it is the conversation's
 //   Prompt(Config) { ... }                                          the player chooses one of its entries
 //   Speaker PromptEntry(Text, TitleText, Mood, ...) { ... }         said when chosen, then its block runs
+//   Character SetSpeechFocus(Character);                            who the character talks to (nil: no one; saved)
+//   Character GetSpeechFocus() -> string                            who they talk to (nil: no one)
 //
-// A speaker is a character ID (a string), or [speaker, directedAt]. Numbered settings start at 1; nil or left out is
+// A speaker is a character ID (a string), or [speaker, directedAt]. With only a speaker, the line is directed at the
+// speaker's speech focus (SetSpeechFocus), taken when the line starts and kept with it. Numbered settings start at 1; nil or left out is
 // the default, and 0 is an error.
 //
 // Everything a command needs after its Start is kept as Bango values (its latent state, or its block's state), so a
@@ -25,6 +28,7 @@
 #include "BangoYap/BangoYapSubsystem.h"
 #include "Engine/World.h"
 #include "Internationalization/Text.h"
+#include "YapBase/YapCharacterManager.h"
 #include "YapBase/YapSettings.h"
 #include "YapBase/YapSpeechConfig.h"
 #include "YapBase/YapSubsystem.h"
@@ -291,6 +295,11 @@ namespace BangoYapPrivate
 		if (Type == FBangoType::String())
 		{
 			Line.Speaker = Call.Target.GetString();
+
+			// Only a speaker: directed at their speech focus, as it is now (kept with the line, so a saved line keeps it).
+			UBangoYapSubsystem* BangoYap = GetBangoYap(Call);
+			const FName Focus = BangoYap ? BangoYap->GetSpeechFocus(FName(*Line.Speaker)) : NAME_None;
+			Line.DirectedAt = Focus.IsNone() ? FString() : Focus.ToString();
 			return true;
 		}
 
@@ -1158,6 +1167,110 @@ namespace BangoYapPrivate
 	}
 }
 
+namespace BangoYapPrivate
+{
+	// ============================================================================================
+	// Character SetSpeechFocus(Character);  and  Character GetSpeechFocus() -> string
+
+	/** The character ID in a focus command's target, checked to be a known character. */
+	static bool ReadFocusCharacter(const FBangoCommandCall& Call, UYapCharacterManager& Characters, const FBangoValue& Value, const TCHAR* What, FName& OutID, FString& OutError)
+	{
+		if (Value.IsNil() || Value.GetString().IsEmpty())
+		{
+			OutError = FString::Printf(TEXT("%s is nil."), What);
+			return false;
+		}
+
+		OutID = FName(*Value.GetString());
+		FString LookUpError;
+		if (!Characters.LookUpCharacter(OutID, LookUpError))
+		{
+			OutError = FString::Printf(TEXT("%s: %s"), What, *LookUpError);
+			return false;
+		}
+		return true;
+	}
+
+	static void RegisterSpeechFocus()
+	{
+		{
+			FBangoCommand Command;
+			Command.Signature = FBangoCommandSignature::Make(TEXT("SetSpeechFocus"))
+				.Target(FBangoType::String())
+				.Param(TEXT("Character"), FBangoType::String(), TEXT("Who the target character talks to (a character's ID); nil: no one")).MayBeNil()
+				.InCategory(Category)
+				.Describe(TEXT("Sets who a character is talking to. Their lines that only name a speaker are directed at them, until it's changed."));
+
+			Command.Start = [](FBangoCommandCall& Call)
+			{
+				UYapCharacterManager* Characters = Call.WorldContext ? UYapCharacterManager::Get(Call.WorldContext) : nullptr;
+				if (!Characters)
+				{
+					return Call.Fail(NoYapError);
+				}
+
+				FName CharacterID;
+				FString Error;
+				if (!ReadFocusCharacter(Call, *Characters, Call.Target, TEXT("The character"), CharacterID, Error))
+				{
+					return Call.Fail(Error);
+				}
+
+				FName FocusID;
+				if (const FBangoValue* Focus = Arg(Call, 0))
+				{
+					if (!ReadFocusCharacter(Call, *Characters, *Focus, TEXT("Who they talk to"), FocusID, Error))
+					{
+						return Call.Fail(Error);
+					}
+					if (FocusID == CharacterID)
+					{
+						return Call.Fail(FString::Printf(TEXT("'%s' can't talk to themselves (SetSpeechFocus)."), *CharacterID.ToString()));
+					}
+				}
+
+				UBangoYapSubsystem* BangoYap = GetBangoYap(Call);
+				if (!BangoYap)
+				{
+					return Call.Fail(NoYapError);
+				}
+				BangoYap->SetSpeechFocus(CharacterID, FocusID);
+				return EBangoCommandResult::Done;
+			};
+
+			Register(Command);
+		}
+
+		{
+			FBangoCommand Command;
+			Command.Signature = FBangoCommandSignature::Make(TEXT("GetSpeechFocus"))
+				.Target(FBangoType::String())
+				.Returns(FBangoType::String())
+				.InCategory(Category)
+				.Describe(TEXT("Who a character is talking to (a character's ID), or nil if no one (SetSpeechFocus)."));
+
+			Command.Start = [](FBangoCommandCall& Call)
+			{
+				UBangoYapSubsystem* BangoYap = GetBangoYap(Call);
+				if (!BangoYap)
+				{
+					return Call.Fail(NoYapError);
+				}
+				if (Call.Target.IsNil())
+				{
+					return Call.Fail(TEXT("The character is nil."));
+				}
+
+				const FName Focus = BangoYap->GetSpeechFocus(FName(*Call.Target.GetString()));
+				Call.Result = Focus.IsNone() ? FBangoValue::MakeNil(FBangoType::String()) : FBangoValue::MakeString(Focus.ToString());
+				return EBangoCommandResult::Done;
+			};
+
+			Register(Command);
+		}
+	}
+}
+
 void BangoYap::RegisterCommands()
 {
 	using namespace BangoYapPrivate;
@@ -1168,4 +1281,5 @@ void BangoYap::RegisterCommands()
 	RegisterConversation();
 	RegisterPrompt();
 	RegisterPromptEntry();
+	RegisterSpeechFocus();
 }
