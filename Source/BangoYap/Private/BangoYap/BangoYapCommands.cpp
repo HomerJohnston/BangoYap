@@ -1,16 +1,17 @@
 // BangoYap's Bango commands (BangoYap Design, in the project): dialogue written in scripts, played by YapBase.
 //
 //   Speech(RunMode, Config, Interruptible, Advance) { ... }        a group of lines
-//   Speaker SpeechLine(Text, Mood, TimeMode, Padding, Interruptible, Advance);
-//   Speaker SpeechLineM(MatureText, ChildSafeText, Mood, ...);
+//   Speaker Say(Text, Mood, TimeMode, Padding, Interruptible, Advance);
+//   Speaker SayM(MatureText, ChildSafeText, Mood, ...);
 //   Conversation(Name) { ... }                                      speech in it is the conversation's
 //   Prompt(Config) { ... }                                          the player chooses one of its entries
-//   Speaker PromptEntry(Text, TitleText, Mood, ...) { ... }         said when chosen, then its block runs
+//   Speaker AddPrompt(Text, TitleText, Mood, ...) { ... }           said when chosen, then its block runs
 //   Character SetSpeechFocus(Character);                            who the character talks to (nil: no one; saved)
 //   Character GetSpeechFocus() -> string                            who they talk to (nil: no one)
 //
-// A speaker is a character ID (a string), or [speaker, directedAt]. With only a speaker, the line is directed at the
-// speaker's speech focus (SetSpeechFocus), taken when the line starts and kept with it. Numbered settings start at 1; nil or left out is
+// A speaker is a character ID (a string), [speaker, directedAt], or [speaker] (the same as [speaker, nil]: directed at
+// no one). With only a speaker (a string), the line is directed at the speaker's speech focus (SetSpeechFocus), taken
+// when the line starts and kept with it. Numbered settings start at 1; nil or left out is
 // the default, and 0 is an error.
 //
 // Everything a command needs after its Start is kept as Bango values (its latent state, or its block's state), so a
@@ -305,18 +306,24 @@ namespace BangoYapPrivate
 
 		if (Type == FBangoType::ArrayOf(EBangoBaseType::String))
 		{
+			// [speaker, directedAt], or [speaker] / [speaker, nil]: directed at no one (not at the speaker's focus).
 			const TArray<FBangoValue>& Who = Call.Target.GetArray();
-			if (Who.Num() != 2 || Who[0].IsNil() || Who[1].IsNil())
+			if (Who.Num() < 1 || Who.Num() > 2)
 			{
-				OutError = FString::Printf(TEXT("A line's speaker is a character's ID, or [speaker, directedAt]: an array of exactly two strings, but this has %d."), Who.Num());
+				OutError = FString::Printf(TEXT("A line's speaker is a character's ID, or [speaker, directedAt], or [speaker]: an array of one or two strings, but this has %d."), Who.Num());
+				return false;
+			}
+			if (Who[0].IsNil() || Who[0].GetString().IsEmpty())
+			{
+				OutError = TEXT("The speaker (the array's first string) is nil.");
 				return false;
 			}
 			Line.Speaker = Who[0].GetString();
-			Line.DirectedAt = Who[1].GetString();
+			Line.DirectedAt = (Who.Num() == 2 && !Who[1].IsNil()) ? Who[1].GetString() : FString();
 			return true;
 		}
 
-		OutError = FString::Printf(TEXT("A line's speaker is a character's ID (a string), or [speaker, directedAt], but this is a %s."), *Type.ToString());
+		OutError = FString::Printf(TEXT("A line's speaker is a character's ID (a string), or [speaker, directedAt], or [speaker], but this is a %s."), *Type.ToString());
 		return false;
 	}
 
@@ -347,7 +354,7 @@ namespace BangoYapPrivate
 		const FString Expected = Line.LineID + GetDefault<UYapSettings>()->ChildSafeKeySuffix;
 		if (!Line.LineID.IsEmpty() && ChildSafeKey != Expected)
 		{
-			Bango::ReportNote(FString::Printf(TEXT("SpeechLineM: the child-safe text's key is '%s', but for the line '%s' it should be '%s'."), *ChildSafeKey, *Line.LineID, *Expected), FColor::Yellow, true);
+			Bango::ReportNote(FString::Printf(TEXT("SayM: the child-safe text's key is '%s', but for the line '%s' it should be '%s'."), *ChildSafeKey, *Line.LineID, *Expected), FColor::Yellow, true);
 		}
 	}
 
@@ -644,13 +651,13 @@ namespace BangoYapPrivate
 	}
 
 	// ============================================================================================
-	// Speaker SpeechLine(Text, ...); and Speaker SpeechLineM(MatureText, ChildSafeText, ...);
+	// Speaker Say(Text, ...); and Speaker SayM(MatureText, ChildSafeText, ...);
 
-	static void RegisterSpeechLine(bool bMature)
+	static void RegisterSay(bool bMature)
 	{
 		const FBangoTypeVar Who(TEXT("T"));
 
-		FBangoCommandSignature Signature = FBangoCommandSignature::Make(bMature ? TEXT("SpeechLineM") : TEXT("SpeechLine"))
+		FBangoCommandSignature Signature = FBangoCommandSignature::Make(bMature ? TEXT("SayM") : TEXT("Say"))
 			.AnyTypeParam(Who, TEXT("speaker"))
 			.Target(Who);
 
@@ -903,7 +910,7 @@ namespace BangoYapPrivate
 	}
 
 	// ============================================================================================
-	// Prompt(Config) { ... } and Speaker PromptEntry(Text, TitleText, ...) { ... }
+	// Prompt(Config) { ... } and Speaker AddPrompt(Text, TitleText, ...) { ... }
 
 	/** Shows the prompt (again, after a load), waits for the player's choice, then says the chosen entry and runs its block. */
 	static EBangoCommandResult DrivePrompt(FBangoCommandCall& Call, TArray<FFields>& Rows)
@@ -1094,11 +1101,11 @@ namespace BangoYapPrivate
 		Register(Command);
 	}
 
-	static void RegisterPromptEntry()
+	static void RegisterAddPrompt()
 	{
 		const FBangoTypeVar Who(TEXT("T"));
 
-		FBangoCommandSignature Signature = FBangoCommandSignature::Make(TEXT("PromptEntry"))
+		FBangoCommandSignature Signature = FBangoCommandSignature::Make(TEXT("AddPrompt"))
 			.AnyTypeParam(Who, TEXT("speaker"))
 			.Target(Who)
 			.Param(TEXT("Text"), FBangoType::Text(), TEXT("What's said when it's chosen; its key is the line's ID"))
@@ -1276,10 +1283,10 @@ void BangoYap::RegisterCommands()
 	using namespace BangoYapPrivate;
 
 	RegisterSpeech();
-	RegisterSpeechLine(false);
-	RegisterSpeechLine(true);
+	RegisterSay(false);
+	RegisterSay(true);
 	RegisterConversation();
 	RegisterPrompt();
-	RegisterPromptEntry();
+	RegisterAddPrompt();
 	RegisterSpeechFocus();
 }

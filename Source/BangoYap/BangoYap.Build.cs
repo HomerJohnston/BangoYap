@@ -13,6 +13,7 @@ public class BangoYap : ModuleRules
 				"Core",
 				"CoreUObject",
 				"Engine",
+				"DeveloperSettings",
 				"GameplayTags",
 				"BangoScripts",
 				"YapBase",
