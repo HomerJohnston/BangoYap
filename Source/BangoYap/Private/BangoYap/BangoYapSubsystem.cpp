@@ -41,40 +41,6 @@ void UBangoYapSubsystem::ForgetConversation(const FString& ConversationID)
 	Conversations.Remove(ConversationID);
 }
 
-void UBangoYapSubsystem::PushOpenConversation(int64 InstanceId, const FString& ConversationID, FName Name)
-{
-	TArray<FOpenConversation>& Open = OpenByInstance.FindOrAdd(InstanceId);
-	if (!Open.ContainsByPredicate([&ConversationID](const FOpenConversation& Entry) { return Entry.ID == ConversationID; }))
-	{
-		Open.Add({ ConversationID, Name });
-	}
-}
-
-void UBangoYapSubsystem::PopOpenConversation(int64 InstanceId, const FString& ConversationID)
-{
-	if (TArray<FOpenConversation>* Open = OpenByInstance.Find(InstanceId))
-	{
-		Open->RemoveAll([&ConversationID](const FOpenConversation& Entry) { return Entry.ID == ConversationID; });
-		if (Open->Num() == 0)
-		{
-			OpenByInstance.Remove(InstanceId);
-		}
-	}
-}
-
-bool UBangoYapSubsystem::GetOpenConversation(int64 InstanceId, FString& OutConversationID, FName& OutName) const
-{
-	const TArray<FOpenConversation>* Open = OpenByInstance.Find(InstanceId);
-	if (!Open || Open->Num() == 0)
-	{
-		return false;
-	}
-
-	OutConversationID = Open->Last().ID;
-	OutName = Open->Last().Name;
-	return true;
-}
-
 bool UBangoYapSubsystem::DoesSupportWorldType(const EWorldType::Type WorldType) const
 {
 	return WorldType == EWorldType::Game || WorldType == EWorldType::PIE;

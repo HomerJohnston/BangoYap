@@ -456,18 +456,31 @@ namespace BangoYapPrivate
 		}
 	}
 
-	/** The innermost Conversation block the calling script has open, if any. */
+	/** A Conversation block's state: [ID, Name]. */
+	static bool ReadConversationFields(const FBangoValue* State, FString& OutID, FString& OutName)
+	{
+		FFields Fields;
+		if (!State || !ValueToFields(*State, Fields) || Fields.Num() < 2)
+		{
+			return false;
+		}
+		OutID = Fields[0].ToString();
+		OutName = Fields[1].ToString();
+		return true;
+	}
+
+	/**
+	 * The innermost Conversation block open in the calling script, through the functions it's in (not a spawn copy's
+	 * or another script's): its ID and name, empty if there's none.
+	 */
 	static void GetCurrentConversation(const FBangoCommandCall& Call, FString& OutID, FString& OutName)
 	{
 		OutID.Reset();
 		OutName.Reset();
-		if (UBangoYapSubsystem* BangoYap = GetBangoYap(Call))
+		if (!ReadConversationFields(Call.FindOpenBlock(TEXT("Conversation")), OutID, OutName))
 		{
-			FName Name;
-			if (BangoYap->GetOpenConversation(Call.InstanceId, OutID, Name))
-			{
-				OutName = Name.IsNone() ? FString() : Name.ToString();
-			}
+			OutID.Reset();
+			OutName.Reset();
 		}
 	}
 
@@ -777,17 +790,9 @@ namespace BangoYapPrivate
 	// ============================================================================================
 	// Conversation(Name) { ... }
 
-	/** A Conversation block's state: [ID, Name]. */
 	static bool ReadConversationState(const FBangoCommandCall& Call, FString& OutID, FString& OutName)
 	{
-		FFields Fields;
-		if (!Call.BlockState || !ValueToFields(*Call.BlockState, Fields) || Fields.Num() < 2)
-		{
-			return false;
-		}
-		OutID = Fields[0].ToString();
-		OutName = Fields[1].ToString();
-		return true;
+		return ReadConversationFields(Call.BlockState, OutID, OutName);
 	}
 
 	/** Waits for the block's conversation to be open (opening it again after a load). */
@@ -807,9 +812,7 @@ namespace BangoYapPrivate
 			return Call.Fail(TEXT("The Conversation block has no state."));
 		}
 
-		const FName ConversationName = Name.IsEmpty() ? NAME_None : FName(*Name);
-		BangoYap->PushOpenConversation(Call.InstanceId, ID, ConversationName);
-		const FYapConversationHandle Handle = BangoYap->EnsureConversation(ID, ConversationName);
+		const FYapConversationHandle Handle = BangoYap->EnsureConversation(ID, Name.IsEmpty() ? NAME_None : FName(*Name));
 		return Yap->GetConversationState(Handle) == EYapConversationState::Open ? EBangoCommandResult::Done : EBangoCommandResult::Pending;
 	}
 
@@ -867,7 +870,6 @@ namespace BangoYapPrivate
 				return EBangoCommandResult::Done;
 			}
 
-			BangoYap->PopOpenConversation(Call.InstanceId, ID);
 			Yap->CloseConversation(BangoYap->FindConversation(ID));
 			return WaitForClosed(Call);
 		};
@@ -883,7 +885,6 @@ namespace BangoYapPrivate
 				return EBangoCommandResult::Done;
 			}
 
-			BangoYap->PopOpenConversation(Call.InstanceId, ID);
 			Yap->CloseConversation(BangoYap->FindConversation(ID), true);
 			BangoYap->ForgetConversation(ID);
 			return EBangoCommandResult::Done;
