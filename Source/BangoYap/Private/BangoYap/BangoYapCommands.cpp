@@ -1,7 +1,7 @@
 // BangoYap's Bango commands (BangoYap Design, in the project): dialogue written in scripts, played by YapBase.
 //
 //   Speech(RunMode, Config, Interruptible, Advance) { ... }        a group of lines
-//   Speaker Say(Text, Mood, TimeMode, Padding, Interruptible, Advance);
+//   Speaker Say(Text, Mood, TimeMode, Padding, Interruptible, Advance);   in a Speech, or on its own (Speech(RUN_ALL))
 //   Speaker SayM(MatureText, ChildSafeText, Mood, ...);
 //   Conversation(Name) { ... }                                      speech in it is the conversation's
 //   Prompt(Config) { ... }                                          the player chooses one of its entries
@@ -674,11 +674,11 @@ namespace BangoYapPrivate
 
 		Signature.Optional();
 		AddLineSettings(Signature)
-			.Inside(TEXT("Speech"))
+			.Inside(TEXT("Speech"), /*bOptional*/ true)
 			.InCategory(Category)
 			.Describe(bMature
-				? TEXT("A line with mature and child-safe text, said by a character (or [speaker, directedAt]).")
-				: TEXT("A line said by a character (or [speaker, directedAt])."));
+				? TEXT("A line with mature and child-safe text, said by a character (or [speaker, directedAt]). In a Speech block, one of its lines; on its own, as if in Speech(RUN_ALL).")
+				: TEXT("A line said by a character (or [speaker, directedAt]). In a Speech block, one of its lines; on its own, as if in Speech(RUN_ALL)."));
 
 		FBangoCommand Command;
 		Command.Signature = Signature;
@@ -686,16 +686,30 @@ namespace BangoYapPrivate
 		Command.Start = [bMature](FBangoCommandCall& Call)
 		{
 			TArray<FFields> Rows;
-			if (!Call.BlockState || !ValueToRows(*Call.BlockState, Rows))
+			FSpeechHeader Header;
+			FString Error;
+
+			if (Call.BlockState)
 			{
-				return Call.Fail(TEXT("The Speech block this line is in has no state."));
+				// One of a Speech block's lines.
+				if (!ValueToRows(*Call.BlockState, Rows))
+				{
+					return Call.Fail(TEXT("The Speech block this line is in has no state."));
+				}
+				Header.FromFields(Rows[0]);
+			}
+			else
+			{
+				// On its own: as if in Speech(RUN_ALL), with the default config, in the conversation it's in (if any).
+				Header.RunMode = (int32)ERunMode::RunAll;
+				if (!CheckConfigExists(Call, Header.ConfigName, Error))
+				{
+					return Call.Fail(Error);
+				}
+				GetCurrentConversation(Call, Header.ConversationID, Header.ConversationName);
 			}
 
-			FSpeechHeader Header;
-			Header.FromFields(Rows[0]);
-
 			FLineRecord Line;
-			FString Error;
 			if (!ReadSpeaker(Call, Line, Error))
 			{
 				return Call.Fail(Error);
@@ -740,7 +754,7 @@ namespace BangoYapPrivate
 			}
 
 			// Select random: gather it; the Speech block's Close plays one.
-			if (Header.RunMode == (int32)ERunMode::SelectRandom)
+			if (Call.BlockState && Header.RunMode == (int32)ERunMode::SelectRandom)
 			{
 				Rows.Add(Line.ToFields());
 				*Call.BlockState = RowsToValue(Rows);
@@ -752,7 +766,7 @@ namespace BangoYapPrivate
 			{
 				Call.LatentState = { FieldsToValue(Line.ToFields()) };
 			}
-			else if (Result == EBangoCommandResult::Done && Header.RunMode == (int32)ERunMode::SelectOne)
+			else if (Result == EBangoCommandResult::Done && Call.BlockState && Header.RunMode == (int32)ERunMode::SelectOne)
 			{
 				Call.EndBlock();
 			}
