@@ -6,12 +6,14 @@
 //   Conversation(Name) { ... }                                      speech in it is the conversation's
 //   Prompt(Config) { ... }                                          the player chooses one of its entries
 //   Speaker AddPrompt(Text, TitleText, Mood, ...) { ... }           said when chosen, then its block runs
-//   Character SetSpeechFocus(Character);                            who the character talks to (nil: no one; saved)
-//   Character GetSpeechFocus() -> string                            who they talk to (nil: no one)
+//   Character SetSpeechFocus(Character);                            who the character talks to (saved)
+//   Character ClearSpeechFocus();                                   they talk to no one
+//   Character GetSpeechFocus() -> string                            who they talk to, as an ID (nil: no one)
 //
-// A speaker is a character ID (a string), [speaker, directedAt], or [speaker] (the same as [speaker, nil]: directed at
-// no one). With only a speaker (a string), the line is directed at the speaker's speech focus (SetSpeechFocus), taken
-// when the line starts and kept with it. Numbered settings start at 1; nil or left out is
+// A character is its ID (a string, "HoJo") or an actor with a Yap Character Component (an entity, @hojo). A speaker is
+// a character, [speaker, directedAt] (two strings or two entities), or [speaker] (the same as [speaker, nil]: directed
+// at no one). With only a speaker, the line is directed at the speaker's speech focus (SetSpeechFocus), taken when the
+// line starts and kept with it. Numbered settings start at 1; nil or left out is
 // the default, and 0 is an error.
 //
 // Everything a command needs after its Start is kept as Bango values (its latent state, or its block's state), so a
@@ -29,6 +31,9 @@
 #include "BangoYap/BangoYapSubsystem.h"
 #include "Engine/World.h"
 #include "Internationalization/Text.h"
+#include "BangoActorRegistry.h"
+#include "GameFramework/Actor.h"
+#include "YapBase/YapCharacterComponent.h"
 #include "YapBase/YapCharacterManager.h"
 #include "YapBase/YapSettings.h"
 #include "YapBase/YapSpeechConfig.h"
@@ -283,7 +288,123 @@ namespace BangoYapPrivate
 		return Key.IsSet() ? Key.GetValue() : FString();
 	}
 
-	/** The speaker (and who it's said to) from a line's target: a string, or [speaker, directedAt]. */
+	// ---- Characters: by ID, or by entity
+	//
+	// A character is named by its ID (a string, "HoJo") or by an actor that has a Yap Character Component (an entity,
+	// @hojo). Kept (in a line's saved state, and in speech focus) as a *speaker key*: the character ID if it's the same
+	// every time (a project character, or a component's custom ID), otherwise '@' and the entity's name, which Bango
+	// keeps through saving and loading where the component's made-up ID isn't. A key becomes a character ID each time a
+	// line starts (KeyToCharacterID).
+
+	static const TCHAR EntityKeyPrefix = TEXT('@');
+
+	static bool IsEntityKey(const FString& Key) { return Key.Len() > 1 && Key[0] == EntityKeyPrefix; }
+
+	/** The Yap Character Component an entity stands for: the actor's, or the entity itself if it's one. */
+	static UYapCharacterComponent* FindCharacterComponent(const FBangoCommandCall& Call, const FString& EntityName, FString& OutError)
+	{
+		UBangoActorRegistry* Registry = Call.WorldContext ? UBangoActorRegistry::Get(Call.WorldContext) : nullptr;
+		UObject* Object = Registry ? Registry->FindEntity(EntityName) : nullptr;
+		if (!Object)
+		{
+			OutError = FString::Printf(TEXT("%s isn't here, so it can't speak."), *Bango::GetEntityDisplayName(EntityName));
+			return nullptr;
+		}
+
+		if (UYapCharacterComponent* Component = Cast<UYapCharacterComponent>(Object))
+		{
+			return Component;
+		}
+
+		AActor* Actor = Cast<AActor>(Object);
+		if (!Actor)
+		{
+			if (const UActorComponent* OtherComponent = Cast<UActorComponent>(Object))
+			{
+				Actor = OtherComponent->GetOwner();
+			}
+		}
+
+		UYapCharacterComponent* Component = Actor ? Actor->FindComponentByClass<UYapCharacterComponent>() : nullptr;
+		if (!Component)
+		{
+			OutError = FString::Printf(TEXT("%s has no Yap Character Component, so it can't speak."), *Bango::GetEntityDisplayName(EntityName));
+		}
+		return Component;
+	}
+
+	/** The speaker key for a string or entity value (What says which, for errors: "The speaker"). */
+	static bool ValueToSpeakerKey(const FBangoCommandCall& Call, const FBangoValue& Value, const TCHAR* What, FString& OutKey, FString& OutError)
+	{
+		if (Value.IsNil())
+		{
+			OutError = FString::Printf(TEXT("%s is nil."), What);
+			return false;
+		}
+
+		const FBangoType& Type = Value.GetType();
+		if (Type == FBangoType::String())
+		{
+			OutKey = Value.GetString();
+			if (OutKey.IsEmpty())
+			{
+				OutError = FString::Printf(TEXT("%s is an empty string."), What);
+				return false;
+			}
+			if (OutKey[0] == EntityKeyPrefix)
+			{
+				OutError = FString::Printf(TEXT("%s is \"%s\": a character ID can't start with '@'. For an actor, write its entity without quotes (@name)."), What, *OutKey);
+				return false;
+			}
+			return true;
+		}
+
+		if (Type == FBangoType::Entity())
+		{
+			const FString& EntityName = Value.GetEntityName();
+			UYapCharacterComponent* Component = FindCharacterComponent(Call, EntityName, OutError);
+			if (!Component)
+			{
+				OutError = FString::Printf(TEXT("%s: %s"), What, *OutError);
+				return false;
+			}
+			OutKey = Component->HasFixedCharacterID() ? Component->GetCharacterID().ToString() : FString(1, &EntityKeyPrefix) + EntityName;
+			return true;
+		}
+
+		OutError = FString::Printf(TEXT("%s is a %s: it should be a character's ID (a string) or an actor with a Yap Character Component (an entity)."), What, *Type.ToString());
+		return false;
+	}
+
+	/** The character ID a speaker key stands for now (empty key: None). */
+	static bool KeyToCharacterID(const FBangoCommandCall& Call, const FString& Key, FName& OutID, FString& OutError)
+	{
+		if (Key.IsEmpty())
+		{
+			OutID = NAME_None;
+			return true;
+		}
+		if (!IsEntityKey(Key))
+		{
+			OutID = FName(*Key);
+			return true;
+		}
+
+		UYapCharacterComponent* Component = FindCharacterComponent(Call, Key.RightChop(1), OutError);
+		if (!Component)
+		{
+			return false;
+		}
+		OutID = Component->GetCharacterID();
+		return true;
+	}
+
+	/**
+	 * The speaker (and who it's said to) from a line's target:
+	 * - a character ID or an entity: said to the speaker's speech focus (if any);
+	 * - [speaker, directedAt] (two strings, or two entities): said to directedAt;
+	 * - [speaker], or [speaker, nil]: said to no one.
+	 */
 	static bool ReadSpeaker(const FBangoCommandCall& Call, FLineRecord& Line, FString& OutError)
 	{
 		if (!Call.bHasTarget || Call.Target.IsNil())
@@ -293,9 +414,12 @@ namespace BangoYapPrivate
 		}
 
 		const FBangoType& Type = Call.Target.GetType();
-		if (Type == FBangoType::String())
+		if (Type == FBangoType::String() || Type == FBangoType::Entity())
 		{
-			Line.Speaker = Call.Target.GetString();
+			if (!ValueToSpeakerKey(Call, Call.Target, TEXT("The speaker"), Line.Speaker, OutError))
+			{
+				return false;
+			}
 
 			// Only a speaker: directed at their speech focus, as it is now (kept with the line, so a saved line keeps it).
 			UBangoYapSubsystem* BangoYap = GetBangoYap(Call);
@@ -304,26 +428,29 @@ namespace BangoYapPrivate
 			return true;
 		}
 
-		if (Type == FBangoType::ArrayOf(EBangoBaseType::String))
+		if (Type == FBangoType::ArrayOf(EBangoBaseType::String) || Type == FBangoType::ArrayOf(EBangoBaseType::Entity))
 		{
 			// [speaker, directedAt], or [speaker] / [speaker, nil]: directed at no one (not at the speaker's focus).
 			const TArray<FBangoValue>& Who = Call.Target.GetArray();
 			if (Who.Num() < 1 || Who.Num() > 2)
 			{
-				OutError = FString::Printf(TEXT("A line's speaker is a character's ID, or [speaker, directedAt], or [speaker]: an array of one or two strings, but this has %d."), Who.Num());
+				OutError = FString::Printf(TEXT("A line's speaker is a character (an ID or an entity), or [speaker, directedAt], or [speaker]: an array of one or two, but this has %d."), Who.Num());
 				return false;
 			}
-			if (Who[0].IsNil() || Who[0].GetString().IsEmpty())
+			if (!ValueToSpeakerKey(Call, Who[0], TEXT("The speaker"), Line.Speaker, OutError))
 			{
-				OutError = TEXT("The speaker (the array's first string) is nil.");
 				return false;
 			}
-			Line.Speaker = Who[0].GetString();
-			Line.DirectedAt = (Who.Num() == 2 && !Who[1].IsNil()) ? Who[1].GetString() : FString();
+			Line.DirectedAt.Reset();
+			if (Who.Num() == 2 && !Who[1].IsNil()
+				&& !ValueToSpeakerKey(Call, Who[1], TEXT("Who it's said to"), Line.DirectedAt, OutError))
+			{
+				return false;
+			}
 			return true;
 		}
 
-		OutError = FString::Printf(TEXT("A line's speaker is a character's ID (a string), or [speaker, directedAt], or [speaker], but this is a %s."), *Type.ToString());
+		OutError = FString::Printf(TEXT("A line's speaker is a character's ID (a string), an actor with a Yap Character Component (an entity), [speaker, directedAt] or [speaker], but this is a %s."), *Type.ToString());
 		return false;
 	}
 
@@ -398,8 +525,12 @@ namespace BangoYapPrivate
 			}
 		}
 
-		OutRequest.Speaker = Line.Speaker.IsEmpty() ? NAME_None : FName(*Line.Speaker);
-		OutRequest.DirectedAt = Line.DirectedAt.IsEmpty() ? NAME_None : FName(*Line.DirectedAt);
+		// Characters named by entity are found again now (their IDs can change between plays and after a load).
+		if (!KeyToCharacterID(Call, Line.Speaker, OutRequest.Speaker, OutError)
+			|| !KeyToCharacterID(Call, Line.DirectedAt, OutRequest.DirectedAt, OutError))
+		{
+			return false;
+		}
 		OutRequest.LineID = Line.LineID.IsEmpty() ? NAME_None : FName(*Line.LineID);
 		OutRequest.MatureText = Line.MatureText;
 		OutRequest.ChildSafeText = Line.ChildSafeText;
@@ -677,8 +808,8 @@ namespace BangoYapPrivate
 			.Inside(TEXT("Speech"), /*bOptional*/ true)
 			.InCategory(Category)
 			.Describe(bMature
-				? TEXT("A line with mature and child-safe text, said by a character (or [speaker, directedAt]). In a Speech block, one of its lines; on its own, as if in Speech(RUN_ALL).")
-				: TEXT("A line said by a character (or [speaker, directedAt]). In a Speech block, one of its lines; on its own, as if in Speech(RUN_ALL)."));
+				? TEXT("A line with mature and child-safe text, said by a character (an ID, or an actor with a Yap Character Component; or [speaker, directedAt]). In a Speech block, one of its lines; on its own, as if in Speech(RUN_ALL).")
+				: TEXT("A line said by a character (an ID, or an actor with a Yap Character Component; or [speaker, directedAt]). In a Speech block, one of its lines; on its own, as if in Speech(RUN_ALL)."));
 
 		FBangoCommand Command;
 		Command.Signature = Signature;
@@ -1130,7 +1261,7 @@ namespace BangoYapPrivate
 			.Inside(TEXT("Prompt"))
 			.Block()
 			.InCategory(Category)
-			.Describe(TEXT("One of a prompt's entries: said by a character (or [speaker, directedAt]) when the player chooses it, then its block runs."));
+			.Describe(TEXT("One of a prompt's entries: said by a character (an ID, or an actor with a Yap Character Component; or [speaker, directedAt]) when the player chooses it, then its block runs."));
 
 		FBangoCommand Command;
 		Command.Signature = Signature;
@@ -1191,20 +1322,25 @@ namespace BangoYapPrivate
 namespace BangoYapPrivate
 {
 	// ============================================================================================
-	// Character SetSpeechFocus(Character);  and  Character GetSpeechFocus() -> string
+	// Character SetSpeechFocus(Character);, Character ClearSpeechFocus(); and Character GetSpeechFocus() -> string
 
 	/** The character ID in a focus command's target, checked to be a known character. */
-	static bool ReadFocusCharacter(const FBangoCommandCall& Call, UYapCharacterManager& Characters, const FBangoValue& Value, const TCHAR* What, FName& OutID, FString& OutError)
+	/** A focus command's character (a string or an entity) as a speaker key, checked to be a known character. */
+	static bool ReadFocusCharacter(const FBangoCommandCall& Call, UYapCharacterManager& Characters, const FBangoValue& Value, const TCHAR* What, FString& OutKey, FString& OutError)
 	{
-		if (Value.IsNil() || Value.GetString().IsEmpty())
+		if (!ValueToSpeakerKey(Call, Value, What, OutKey, OutError))
 		{
-			OutError = FString::Printf(TEXT("%s is nil."), What);
 			return false;
 		}
 
-		OutID = FName(*Value.GetString());
+		FName CharacterID;
+		if (!KeyToCharacterID(Call, OutKey, CharacterID, OutError))
+		{
+			return false;
+		}
+
 		FString LookUpError;
-		if (!Characters.LookUpCharacter(OutID, LookUpError))
+		if (!Characters.LookUpCharacter(CharacterID, LookUpError))
 		{
 			OutError = FString::Printf(TEXT("%s: %s"), What, *LookUpError);
 			return false;
@@ -1214,48 +1350,83 @@ namespace BangoYapPrivate
 
 	static void RegisterSpeechFocus()
 	{
+		const FBangoTypeVar Who(TEXT("T"));
+		const FBangoTypeVar Whom(TEXT("U"));
+
 		{
 			FBangoCommand Command;
 			Command.Signature = FBangoCommandSignature::Make(TEXT("SetSpeechFocus"))
-				.Target(FBangoType::String())
-				.Param(TEXT("Character"), FBangoType::String(), TEXT("Who the target character talks to (a character's ID); nil: no one")).MayBeNil()
+				.TypeParam(Who, { FBangoType::String(), FBangoType::Entity() }, TEXT("character"))
+				.TypeParam(Whom, { FBangoType::String(), FBangoType::Entity() }, TEXT("character"))
+				.Target(Who)
+				.Param(TEXT("Character"), Whom, TEXT("Who the target character talks to (a character's ID, or an actor with a Yap Character Component)"))
 				.InCategory(Category)
-				.Describe(TEXT("Sets who a character is talking to. Their lines that only name a speaker are directed at them, until it's changed."));
+				.Describe(TEXT("Sets who a character (an ID, or an actor with a Yap Character Component) is talking to. Their lines that only name a speaker are directed at them, until it's changed (or ClearSpeechFocus)."));
 
 			Command.Start = [](FBangoCommandCall& Call)
 			{
 				UYapCharacterManager* Characters = Call.WorldContext ? UYapCharacterManager::Get(Call.WorldContext) : nullptr;
-				if (!Characters)
+				UBangoYapSubsystem* BangoYap = GetBangoYap(Call);
+				if (!Characters || !BangoYap)
 				{
 					return Call.Fail(NoYapError);
 				}
 
-				FName CharacterID;
+				FString CharacterKey;
 				FString Error;
-				if (!ReadFocusCharacter(Call, *Characters, Call.Target, TEXT("The character"), CharacterID, Error))
+				if (!ReadFocusCharacter(Call, *Characters, Call.Target, TEXT("The character"), CharacterKey, Error))
 				{
 					return Call.Fail(Error);
 				}
 
-				FName FocusID;
-				if (const FBangoValue* Focus = Arg(Call, 0))
+				const FBangoValue* Focus = Arg(Call, 0);
+				if (!Focus)
 				{
-					if (!ReadFocusCharacter(Call, *Characters, *Focus, TEXT("Who they talk to"), FocusID, Error))
-					{
-						return Call.Fail(Error);
-					}
-					if (FocusID == CharacterID)
-					{
-						return Call.Fail(FString::Printf(TEXT("'%s' can't talk to themselves (SetSpeechFocus)."), *CharacterID.ToString()));
-					}
+					return Call.Fail(TEXT("Who they talk to is nil. To have them talk to no one, use ClearSpeechFocus."));
 				}
 
+				FString FocusKey;
+				if (!ReadFocusCharacter(Call, *Characters, *Focus, TEXT("Who they talk to"), FocusKey, Error))
+				{
+					return Call.Fail(Error);
+				}
+				if (FocusKey == CharacterKey)
+				{
+					return Call.Fail(TEXT("A character can't talk to themselves (SetSpeechFocus)."));
+				}
+
+				BangoYap->SetSpeechFocus(FName(*CharacterKey), FName(*FocusKey));
+				return EBangoCommandResult::Done;
+			};
+
+			Register(Command);
+		}
+
+		{
+			FBangoCommand Command;
+			Command.Signature = FBangoCommandSignature::Make(TEXT("ClearSpeechFocus"))
+				.TypeParam(Who, { FBangoType::String(), FBangoType::Entity() }, TEXT("character"))
+				.Target(Who)
+				.InCategory(Category)
+				.Describe(TEXT("The character talks to no one: their lines that only name a speaker aren't directed at anyone (SetSpeechFocus)."));
+
+			Command.Start = [](FBangoCommandCall& Call)
+			{
 				UBangoYapSubsystem* BangoYap = GetBangoYap(Call);
 				if (!BangoYap)
 				{
 					return Call.Fail(NoYapError);
 				}
-				BangoYap->SetSpeechFocus(CharacterID, FocusID);
+
+				// No check that the character exists: clearing a focus that isn't there does nothing.
+				FString CharacterKey;
+				FString Error;
+				if (!ValueToSpeakerKey(Call, Call.Target, TEXT("The character"), CharacterKey, Error))
+				{
+					return Call.Fail(Error);
+				}
+
+				BangoYap->SetSpeechFocus(FName(*CharacterKey), NAME_None);
 				return EBangoCommandResult::Done;
 			};
 
@@ -1265,10 +1436,11 @@ namespace BangoYapPrivate
 		{
 			FBangoCommand Command;
 			Command.Signature = FBangoCommandSignature::Make(TEXT("GetSpeechFocus"))
-				.Target(FBangoType::String())
+				.TypeParam(Who, { FBangoType::String(), FBangoType::Entity() }, TEXT("character"))
+				.Target(Who)
 				.Returns(FBangoType::String())
 				.InCategory(Category)
-				.Describe(TEXT("Who a character is talking to (a character's ID), or nil if no one (SetSpeechFocus)."));
+				.Describe(TEXT("Who a character is talking to, as a character's ID, or nil if no one (SetSpeechFocus)."));
 
 			Command.Start = [](FBangoCommandCall& Call)
 			{
@@ -1277,13 +1449,25 @@ namespace BangoYapPrivate
 				{
 					return Call.Fail(NoYapError);
 				}
-				if (Call.Target.IsNil())
+
+				FString CharacterKey;
+				FString Error;
+				if (!ValueToSpeakerKey(Call, Call.Target, TEXT("The character"), CharacterKey, Error))
 				{
-					return Call.Fail(TEXT("The character is nil."));
+					return Call.Fail(Error);
 				}
 
-				const FName Focus = BangoYap->GetSpeechFocus(FName(*Call.Target.GetString()));
-				Call.Result = Focus.IsNone() ? FBangoValue::MakeNil(FBangoType::String()) : FBangoValue::MakeString(Focus.ToString());
+				const FName Focus = BangoYap->GetSpeechFocus(FName(*CharacterKey));
+				FName FocusID;
+				if (Focus.IsNone() || !KeyToCharacterID(Call, Focus.ToString(), FocusID, Error))
+				{
+					// No one, or an actor that's gone.
+					Call.Result = FBangoValue::MakeNil(FBangoType::String());
+				}
+				else
+				{
+					Call.Result = FBangoValue::MakeString(FocusID.ToString());
+				}
 				return EBangoCommandResult::Done;
 			};
 

@@ -2,6 +2,6 @@
 
 namespace BangoYap
 {
-	/** Registers Speech, Say, SayM, Conversation, Prompt, AddPrompt, SetSpeechFocus and GetSpeechFocus (once: again does nothing). */
+	/** Registers Speech, Say, SayM, Conversation, Prompt, AddPrompt, SetSpeechFocus, ClearSpeechFocus and GetSpeechFocus (once: again does nothing). */
 	void RegisterCommands();
 }
