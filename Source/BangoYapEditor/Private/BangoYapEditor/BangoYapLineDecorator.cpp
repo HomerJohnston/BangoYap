@@ -101,4 +101,9 @@ TSharedPtr<SWidget> FBangoYapLineDecorator::MakeExtraContent(const FBangoNodeDec
 		.Data(FBangoYapLineData::FromContext(Context));
 }
 
+bool FBangoYapLineDecorator::HidesField(const FBangoNodeDecoratorContext& Context, int32 FieldIndex) const
+{
+	return FBangoYapLineData::RowCoversField(Context, FieldIndex);
+}
+
 #undef LOCTEXT_NAMESPACE

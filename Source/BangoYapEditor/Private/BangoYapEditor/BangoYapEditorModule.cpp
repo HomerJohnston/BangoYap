@@ -1,4 +1,5 @@
 #include "BangoNodeDecorator.h"
+#include "BangoYapBlockDecorator.h"
 #include "BangoYapEditorStyle.h"
 #include "BangoYapLineDecorator.h"
 #include "Modules/ModuleManager.h"
@@ -19,6 +20,12 @@ public:
 		{
 			Bango::RegisterNodeDecorator(Command, LineDecorator);
 		}
+
+		const TSharedRef<FBangoYapBlockDecorator> BlockDecorator = MakeShared<FBangoYapBlockDecorator>();
+		for (const FString& Command : FBangoYapBlockDecorator::GetCommandNames())
+		{
+			Bango::RegisterNodeDecorator(Command, BlockDecorator);
+		}
 	}
 
 	virtual void ShutdownModule() override
@@ -27,6 +34,10 @@ public:
 		if (FModuleManager::Get().IsModuleLoaded(TEXT("BangoScriptsScriptEditor")))
 		{
 			for (const FString& Command : FBangoYapLineDecorator::GetCommandNames())
+			{
+				Bango::UnregisterNodeDecorator(Command);
+			}
+			for (const FString& Command : FBangoYapBlockDecorator::GetCommandNames())
 			{
 				Bango::UnregisterNodeDecorator(Command);
 			}

@@ -23,6 +23,7 @@ public class BangoYapEditor : ModuleRules
 				"SlateCore",
 				"InputCore",
 				"UnrealEd",
+				"EditorWidgets",
 				"Projects",
 				"AssetRegistry",
 				"GameplayTags",

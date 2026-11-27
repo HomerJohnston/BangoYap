@@ -9,6 +9,8 @@
 #include "UObject/UObjectGlobals.h"
 #include "YapBase/YapCharacterAsset.h"
 #include "YapBase/YapMoodTags.h"
+#include "YapBase/YapSettings.h"
+#include "BangoYap/BangoYapSettings.h"
 
 namespace BangoYapEditorPrivate
 {
@@ -277,6 +279,7 @@ BangoYapEditor::FTextValue BangoYapEditor::ReadTextField(const FBangoNodeLayout&
 		Value.bInvariant = Literal.bInvariant;
 		Value.Source = Literal.Source;
 		Value.Key = Literal.bInvariant ? FString() : Literal.Key;
+		Value.Literal = Literal;
 	}
 	else
 	{
@@ -311,4 +314,276 @@ FGameplayTag BangoYapEditor::FindMoodTag(const FString& Mood)
 		}
 	}
 	return FGameplayTag();
+}
+
+// ================================================================================================ Writing
+
+FString BangoYapEditor::MakeStringLiteral(const FString& Value)
+{
+	FString Out = TEXT("\"");
+	for (const TCHAR Char : Value)
+	{
+		switch (Char)
+		{
+			case TEXT('"'): Out += TEXT("\\\""); break;
+			case TEXT('\\'): Out += TEXT("\\\\"); break;
+			case TEXT('\n'): Out += TEXT("\\n"); break;
+			case TEXT('\t'): Out += TEXT("\\t"); break;
+			default: Out.AppendChar(Char); break;
+		}
+	}
+	Out += TEXT("\"");
+	return Out;
+}
+
+FString BangoYapEditor::CharacterRefToScript(const FCharacterRef& Ref)
+{
+	switch (Ref.Kind)
+	{
+		case ECharacterRefKind::None: return TEXT("nil");
+		case ECharacterRefKind::ID: return MakeStringLiteral(Ref.Value);
+		case ECharacterRefKind::Entity: return TEXT("@") + Ref.Value;
+		default: return Ref.Value;
+	}
+}
+
+FString BangoYapEditor::MakeTargetScript(const FSpeakerTarget& Target, bool* OutDropped)
+{
+	if (OutDropped)
+	{
+		*OutDropped = false;
+	}
+
+	if (!Target.bArray)
+	{
+		return CharacterRefToScript(Target.Speaker);
+	}
+
+	FString Speaker = CharacterRefToScript(Target.Speaker);
+	if (!Target.DirectedAt.IsSet())
+	{
+		return FString::Printf(TEXT("[%s]"), *Speaker);
+	}
+
+	// An array holds one type: an ID with an ID, an entity with an entity. Variables and expressions are trusted.
+	const auto IsLiteralKind = [](ECharacterRefKind Kind) { return Kind == ECharacterRefKind::ID || Kind == ECharacterRefKind::Entity; };
+	if (IsLiteralKind(Target.Speaker.Kind) && IsLiteralKind(Target.DirectedAt.Kind) && Target.Speaker.Kind != Target.DirectedAt.Kind)
+	{
+		if (OutDropped)
+		{
+			*OutDropped = true;
+		}
+		return FString::Printf(TEXT("[%s]"), *Speaker);
+	}
+
+	return FString::Printf(TEXT("[%s, %s]"), *Speaker, *CharacterRefToScript(Target.DirectedAt));
+}
+
+bool BangoYapEditor::IsTargetEditableInRow(const FSpeakerTarget& Target)
+{
+	if (!Target.bValid)
+	{
+		return false;
+	}
+	const auto Editable = [](const FCharacterRef& Ref)
+	{
+		return Ref.Kind == ECharacterRefKind::None || Ref.Kind == ECharacterRefKind::ID || Ref.Kind == ECharacterRefKind::Entity;
+	};
+	return Editable(Target.Speaker) && Editable(Target.DirectedAt);
+}
+
+FString BangoYapEditor::GetClearValue(const FBangoNodeLayout& Layout, int32 FieldIndex)
+{
+	for (int32 i = FieldIndex + 1; i < Layout.Fields.Num(); ++i)
+	{
+		if (Layout.Fields[i].bPresent && Layout.Fields[i].bHasValue)
+		{
+			return TEXT("nil");
+		}
+	}
+	return FString();
+}
+
+TArray<UYapCharacterAsset*> BangoYapEditor::GetAllCharacters()
+{
+	BangoYapEditorPrivate::FCharacterCache& Cache = BangoYapEditorPrivate::Characters();
+	if (Cache.bDirty)
+	{
+		Cache.Rebuild();
+	}
+
+	TArray<UYapCharacterAsset*> Out;
+	for (const TPair<FName, TWeakObjectPtr<UYapCharacterAsset>>& Pair : Cache.ByID)
+	{
+		if (UYapCharacterAsset* Character = Pair.Value.Get())
+		{
+			Out.Add(Character);
+		}
+	}
+	Out.Sort([](const UYapCharacterAsset& A, const UYapCharacterAsset& B)
+	{
+		return A.GetCharacterName().ToString() < B.GetCharacterName().ToString();
+	});
+	return Out;
+}
+
+FString BangoYapEditor::MakeLineID()
+{
+	const FString Format = GetDefault<UYapSettings>()->LineIDFormat.IsEmpty() ? FString(TEXT("***###")) : GetDefault<UYapSettings>()->LineIDFormat;
+	static const TCHAR* Letters = TEXT("ABCDEFGHIJKLMNOPQRSTUVWXYZ");
+	static const TCHAR* LettersAndDigits = TEXT("ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789");
+
+	FString ID;
+	for (const TCHAR Char : Format)
+	{
+		switch (Char)
+		{
+			case TEXT('*'): ID.AppendChar(Letters[FMath::RandRange(0, 25)]); break;
+			case TEXT('?'): ID.AppendChar(LettersAndDigits[FMath::RandRange(0, 35)]); break;
+			case TEXT('#'): ID.AppendChar(TEXT('0') + FMath::RandRange(0, 9)); break;
+			default: ID.AppendChar(Char); break;
+		}
+	}
+	return ID;
+}
+
+FString BangoYapEditor::MakeChildSafeKey(const FString& LineID)
+{
+	return LineID.IsEmpty() ? FString() : LineID + GetDefault<UYapSettings>()->ChildSafeKeySuffix;
+}
+
+// ------------------------------------------------------------------------------------------------ Line settings
+
+namespace BangoYapEditorPrivate
+{
+	/** The project's define names for a setting's values (UBangoYapSettings), by value. */
+	static TMap<int32, FString> GetDefineNames(BangoYapEditor::ELineSetting Setting)
+	{
+		using namespace BangoYapEditor;
+		const UBangoYapSettings* Settings = GetDefault<UBangoYapSettings>();
+		TMap<int32, FString> Out;
+
+		auto Add = [&Out](const auto& Map)
+		{
+			for (const auto& Pair : Map)
+			{
+				const FString Name = Pair.Value.TrimStartAndEnd();
+				if (!Name.IsEmpty())
+				{
+					Out.Add((int32)Pair.Key, Name);
+				}
+			}
+		};
+
+		switch (Setting)
+		{
+			case ELineSetting::TimeMode: Add(Settings->SpeechTime); break;
+			case ELineSetting::Interruptible: Add(Settings->Interruption); break;
+			case ELineSetting::Advance: Add(Settings->Advancing); break;
+			case ELineSetting::RunMode: Add(Settings->SpeechProgression); break;
+		}
+		return Out;
+	}
+}
+
+const TCHAR* BangoYapEditor::GetSettingLabel(ELineSetting Setting)
+{
+	switch (Setting)
+	{
+		case ELineSetting::TimeMode: return TEXT("TimeMode");
+		case ELineSetting::Interruptible: return TEXT("Interruptible");
+		case ELineSetting::RunMode: return TEXT("RunMode");
+		default: return TEXT("Advance");
+	}
+}
+
+int32 BangoYapEditor::GetSettingMax(ELineSetting Setting)
+{
+	switch (Setting)
+	{
+		case ELineSetting::TimeMode: return 4;
+		case ELineSetting::RunMode: return 3;
+		default: return 2;
+	}
+}
+
+BangoYapEditor::FSettingValue BangoYapEditor::ReadSetting(const FBangoNodeLayout& Layout, ELineSetting Setting)
+{
+	FSettingValue Out;
+	Out.Text = GetFieldText(Layout, GetSettingLabel(Setting));
+
+	if (Out.Text.IsEmpty() || Out.Text == TEXT("nil"))
+	{
+		return Out;
+	}
+
+	int32 Number = 0;
+	if (Out.Text.IsNumeric() && LexTryParseString(Number, *Out.Text) && Number >= 1 && Number <= GetSettingMax(Setting))
+	{
+		Out.Kind = FSettingValue::EKind::Value;
+		Out.Value = Number;
+		return Out;
+	}
+
+	for (const TPair<int32, FString>& Pair : BangoYapEditorPrivate::GetDefineNames(Setting))
+	{
+		if (Pair.Value == Out.Text)
+		{
+			Out.Kind = FSettingValue::EKind::Value;
+			Out.Value = Pair.Key;
+			return Out;
+		}
+	}
+
+	Out.Kind = FSettingValue::EKind::Expression;
+	return Out;
+}
+
+FString BangoYapEditor::GetSettingDefineName(ELineSetting Setting, int32 Value)
+{
+	const FString* Name = BangoYapEditorPrivate::GetDefineNames(Setting).Find(Value);
+	return Name ? *Name : FString();
+}
+
+FString BangoYapEditor::MakeSettingScript(ELineSetting Setting, int32 Value)
+{
+	if (Value <= 0)
+	{
+		return TEXT("nil");
+	}
+	const FString Name = GetSettingDefineName(Setting, Value);
+	return Name.IsEmpty() ? FString::FromInt(Value) : Name;
+}
+
+BangoYapEditor::FPaddingValue BangoYapEditor::ReadPadding(const FBangoNodeLayout& Layout)
+{
+	FPaddingValue Out;
+	Out.Text = GetFieldText(Layout, TEXT("Padding"));
+
+	if (Out.Text.IsEmpty() || Out.Text == TEXT("nil"))
+	{
+		return Out;
+	}
+
+	Out.bSet = true;
+
+	// A number, maybe negative (written `-0.25`, which scripts read as a minus and a number).
+	FString Number = Out.Text.Replace(TEXT(" "), TEXT(""));
+	double Value = 0.0;
+	if (Number.IsNumeric() && LexTryParseString(Value, *Number))
+	{
+		Out.Value = (float)Value;
+	}
+	else
+	{
+		Out.bExpression = true;
+	}
+	return Out;
+}
+
+FString BangoYapEditor::MakeSecondsScript(float Seconds)
+{
+	// Two decimals at most (as Yap's boxes show), with the point kept: "2.0", "0.25", "-0.5".
+	const double Rounded = FMath::RoundToDouble(Seconds * 100.0) / 100.0;
+	return FString::SanitizeFloat(Rounded, 1);
 }

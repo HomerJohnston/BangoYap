@@ -33,6 +33,26 @@ public:
 	static const FName Portrait_Missing;
 	static const FName Mood_None;
 	static const FName Mood_Unknown;
+	static const FName Icon_Interruptible_All;
+	static const FName Icon_Interruptible_None;
+	static const FName Icon_AutoAdvance_All;
+	static const FName Icon_AutoAdvance_None;
+	static const FName Icon_TextTime;
+	static const FName Icon_AudioTime;
+	static const FName Icon_Timer;
+	static const FName Icon_CrossX;
+	/** Yap's project-settings icon (FAppStyle's), which its editor uses for "use the default". */
+	static const FName Icon_Default;
+	/** The time bar's pieces (Yap's): speech, negative padding, positive padding, and the playback marker. */
+	static const FName Bar_NormalPadding;
+	static const FName Bar_NegativePadding;
+	static const FName Bar_PositivePadding;
+	static const FName Icon_PlaybackTimeHandle;
+	/** Yap's select-random icon, for the sequencing button. */
+	static const FName Icon_Random;
+
+	/** Yap's ButtonStyle_TimeSetting: a rounded box tinted by the button's colour. */
+	static const FName ButtonStyle_TimeSetting;
 
 private:
 	static TSharedPtr<FSlateStyleSet> StyleInstance;
@@ -54,6 +74,14 @@ namespace BangoYapColor
 	inline const FLinearColor Red(0.95f, 0.04f, 0.06f, 1.0f);
 	inline const FLinearColor LightBlue(0.34f, 0.42f, 1.0f, 1.0f);
 	inline const FLinearColor Orange(0.78f, 0.38f, 0.05f, 1.0f);
+	inline const FLinearColor Green(0.18f, 0.95f, 0.22f, 1.0f);
+	inline const FLinearColor LightGreen(0.34f, 1.0f, 0.42f, 1.0f);
+	inline const FLinearColor Cyan(0.05f, 0.8f, 0.8f, 1.0f);
+	inline const FLinearColor DimWhite(0.9f, 0.9f, 0.9f, 1.0f);
+	inline const FLinearColor LightOrange(0.85f, 0.55f, 0.15f, 1.0f);
+	inline const FLinearColor LightCyan(0.5f, 0.95f, 0.95f, 1.0f);
+	inline const FLinearColor OrangeRed(0.92f, 0.07f, 0.02f, 1.0f);
+	inline const FLinearColor Yellow_Glass(0.85f, 0.8f, 0.05f, 0.2f);
 
 	/** Yap's own desaturate (FLinearColor::Desaturate also fades alpha). */
 	inline FLinearColor Desaturate(const FLinearColor& Color, float Amount)

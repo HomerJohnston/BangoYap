@@ -77,6 +77,13 @@ public:
 	UPROPERTY(Config, EditAnywhere, Category = "Script Defines|Advancing", meta = (ForceInlineRow))
 	TMap<EBangoYapAdvance, FString> Advancing;
 
+	/**
+	 * The script graph's line nodes draw a bar under each line for its speech time and padding (as Yap's dialogue
+	 * node does). This many seconds fill the bar; a longer line is drawn shrunk to fit.
+	 */
+	UPROPERTY(Config, EditAnywhere, Category = "Graph Nodes", meta = (ClampMin = 0.5, UIMin = 1.0, UIMax = 30.0, Units = "s"))
+	float TimeBarMaxSeconds = 5.0f;
+
 	/** Registers the defines above with Bango again (it's done for you when they're changed here). */
 	UFUNCTION(CallInEditor, Category = "Script Defines", meta = (DisplayName = "Register Script Defines"))
 	void RegisterScriptDefines() const;

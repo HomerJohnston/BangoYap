@@ -116,6 +116,10 @@ void UBangoYapSettings::RegisterScriptDefines() const
 void UBangoYapSettings::PostEditChangeProperty(FPropertyChangedEvent& PropertyChangedEvent)
 {
 	Super::PostEditChangeProperty(PropertyChangedEvent);
+	if (PropertyChangedEvent.GetMemberPropertyName() == GET_MEMBER_NAME_CHECKED(UBangoYapSettings, TimeBarMaxSeconds))
+	{
+		return; // not a define
+	}
 	BangoYap::RegisterDefines();
 }
 #endif
