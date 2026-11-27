@@ -8,7 +8,7 @@
 //   Speaker AddPrompt(Text, TitleText, Mood, ...) { ... }           said when chosen, then its block runs
 //   Character SetSpeechFocus(Character);                            who the character talks to (saved)
 //   Character ClearSpeechFocus();                                   they talk to no one
-//   Character GetSpeechFocus() -> string                            who they talk to, as an ID (nil: no one)
+//   GetSpeechFocus(Character) -> string                             who they talk to, as an ID (nil: no one)
 //
 // A character is its ID (a string, "HoJo") or an actor with a Yap Character Component (an entity, @hojo). A speaker is
 // a character, [speaker, directedAt] (two strings or two entities), or [speaker] (the same as [speaker, nil]: directed
@@ -1322,7 +1322,7 @@ namespace BangoYapPrivate
 namespace BangoYapPrivate
 {
 	// ============================================================================================
-	// Character SetSpeechFocus(Character);, Character ClearSpeechFocus(); and Character GetSpeechFocus() -> string
+	// Character SetSpeechFocus(Character);, Character ClearSpeechFocus(); and GetSpeechFocus(Character) -> string
 
 	/** The character ID in a focus command's target, checked to be a known character. */
 	/** A focus command's character (a string or an entity) as a speaker key, checked to be a known character. */
@@ -1437,7 +1437,7 @@ namespace BangoYapPrivate
 			FBangoCommand Command;
 			Command.Signature = FBangoCommandSignature::Make(TEXT("GetSpeechFocus"))
 				.TypeParam(Who, { FBangoType::String(), FBangoType::Entity() }, TEXT("character"))
-				.Target(Who)
+				.Param(TEXT("Character"), Who, TEXT("The character (a character's ID, or an actor with a Yap Character Component)"))
 				.Returns(FBangoType::String())
 				.InCategory(Category)
 				.Describe(TEXT("Who a character is talking to, as a character's ID, or nil if no one (SetSpeechFocus)."));
@@ -1450,9 +1450,15 @@ namespace BangoYapPrivate
 					return Call.Fail(NoYapError);
 				}
 
+				const FBangoValue* Character = Arg(Call, 0);
+				if (!Character)
+				{
+					return Call.Fail(TEXT("The character is nil."));
+				}
+
 				FString CharacterKey;
 				FString Error;
-				if (!ValueToSpeakerKey(Call, Call.Target, TEXT("The character"), CharacterKey, Error))
+				if (!ValueToSpeakerKey(Call, *Character, TEXT("The character"), CharacterKey, Error))
 				{
 					return Call.Fail(Error);
 				}
