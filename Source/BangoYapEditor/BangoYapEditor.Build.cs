@@ -1,6 +1,6 @@
 using UnrealBuildTool;
 
-/** BangoYap editor support: dialogue authoring inside the Bango script editor. */
+/** BangoYap editor support: dialogue authoring inside the Bango script editor (graph nodes drawn like Yap's). */
 public class BangoYapEditor : ModuleRules
 {
 	public BangoYapEditor(ReadOnlyTargetRules Target) : base(Target)
@@ -21,7 +21,11 @@ public class BangoYapEditor : ModuleRules
 				"Engine",
 				"Slate",
 				"SlateCore",
+				"InputCore",
 				"UnrealEd",
+				"Projects",
+				"AssetRegistry",
+				"GameplayTags",
 				"BangoScripts",
 				"BangoScriptsScriptEditor",
 				"YapBase",
