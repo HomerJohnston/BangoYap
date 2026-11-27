@@ -84,3 +84,37 @@ private:
 	FBangoYapBlockData Data;
 	TSharedPtr<SComboButton> ConfigCombo;
 };
+
+/**
+ * One entry's row of a Speech or Prompt whose block is a list of entries (Bango v0.140), beside the entry's output
+ * pin: a numbered badge in the run mode's colour (a prompt's in Yap's title colour), then the entry's condition box
+ * (the graph editor's own, from FBangoNodeDecoratorContext::MakeEntryConditionWidget: typing, Tab, the hint Always,
+ * the red outline for an error), on Yap's dark rounded panel.
+ *
+ * While the debugger follows a copy of the script with the block open: a row whose entry didn't pass is dimmed, and
+ * the running one has Yap's fragment highlight. A disabled entry is dimmed too.
+ */
+class SBangoYapEntryRow : public SCompoundWidget
+{
+public:
+	SLATE_BEGIN_ARGS(SBangoYapEntryRow)
+		: _Entry(0)
+		, _bDisabled(false)
+		, _bHasDebug(false)
+		, _bDebugPassed(true)
+		, _bDebugRunning(false)
+	{}
+		SLATE_ARGUMENT(FBangoYapBlockData, Data)
+		SLATE_ARGUMENT(int32, Entry)
+		SLATE_ARGUMENT(TSharedPtr<SWidget>, ConditionWidget)
+		SLATE_ARGUMENT(bool, bDisabled)
+		SLATE_ARGUMENT(bool, bHasDebug)
+		SLATE_ARGUMENT(bool, bDebugPassed)
+		SLATE_ARGUMENT(bool, bDebugRunning)
+	SLATE_END_ARGS()
+
+	void Construct(const FArguments& InArgs);
+
+	/** The row for entry Entry of the node in Context (a Speech's or a Prompt's). */
+	static TSharedRef<SWidget> Make(const struct FBangoNodeDecoratorContext& Context, int32 Entry);
+};

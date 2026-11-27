@@ -143,6 +143,8 @@ namespace BangoYapPrivate
 		float Elapsed = 0.0f;
 		/** A prompt entry's block. */
 		int32 BlockNumber = -1;
+		/** A prompt entry: the Prompt block's entry it's written in (entry if (...):), or -1. */
+		int32 EntryNumber = -1;
 
 		FFields ToFields() const
 		{
@@ -150,7 +152,7 @@ namespace BangoYapPrivate
 				ToField(Speaker), ToField(DirectedAt), ToField(LineID), MatureText, ChildSafeText, TitleText, ToField(Mood),
 				ToField(TimeMode), ToField(bHasPadding), ToField(Padding), ToField(Interruptible), ToField(Advance),
 				ToField(ConfigName), ToField(ConversationID), ToField(ConversationName), ToField(SpeechHandle),
-				ToField(Elapsed), ToField(BlockNumber),
+				ToField(Elapsed), ToField(BlockNumber), ToField(EntryNumber),
 			};
 		}
 
@@ -174,6 +176,7 @@ namespace BangoYapPrivate
 			SpeechHandle = FieldString(Fields, 15);
 			Elapsed = FieldFloat(Fields, 16);
 			BlockNumber = Fields.IsValidIndex(17) ? FieldInt(Fields, 17) : -1;
+			EntryNumber = Fields.IsValidIndex(18) ? FieldInt(Fields, 18) : -1;
 		}
 	};
 
@@ -188,10 +191,12 @@ namespace BangoYapPrivate
 		FString ConversationName;
 		/** Select random: the row of the line chosen to play, or 0. */
 		int32 RunningRow = 0;
+		/** The block is a list of entries (entry if (...): / entry:): the Speech chooses the entries, and its lines just play. */
+		bool bEntries = false;
 
 		FFields ToFields() const
 		{
-			return { ToField(RunMode), ToField(ConfigName), ToField(Interruptible), ToField(Advance), ToField(ConversationID), ToField(ConversationName), ToField(RunningRow) };
+			return { ToField(RunMode), ToField(ConfigName), ToField(Interruptible), ToField(Advance), ToField(ConversationID), ToField(ConversationName), ToField(RunningRow), ToField(bEntries) };
 		}
 
 		void FromFields(const FFields& Fields)
@@ -203,6 +208,7 @@ namespace BangoYapPrivate
 			ConversationID = FieldString(Fields, 4);
 			ConversationName = FieldString(Fields, 5);
 			RunningRow = FieldInt(Fields, 6);
+			bEntries = FieldBool(Fields, 7);
 		}
 	};
 
@@ -216,10 +222,12 @@ namespace BangoYapPrivate
 		/** 0: not shown yet. 1: waiting for the player. 2: the chosen entry is being said. */
 		int32 Phase = 0;
 		int32 ChosenRow = 0;
+		/** The block is a list of entries: each AddPrompt's entry says whether it's shown, watched while the player chooses. */
+		bool bEntries = false;
 
 		FFields ToFields() const
 		{
-			return { ToField(ConfigName), ToField(ConversationID), ToField(ConversationName), ToField(PromptHandle), ToField(Phase), ToField(ChosenRow) };
+			return { ToField(ConfigName), ToField(ConversationID), ToField(ConversationName), ToField(PromptHandle), ToField(Phase), ToField(ChosenRow), ToField(bEntries) };
 		}
 
 		void FromFields(const FFields& Fields)
@@ -230,6 +238,7 @@ namespace BangoYapPrivate
 			PromptHandle = FieldString(Fields, 3);
 			Phase = FieldInt(Fields, 4);
 			ChosenRow = FieldInt(Fields, 5);
+			bEntries = FieldBool(Fields, 6);
 		}
 	};
 
@@ -669,6 +678,33 @@ namespace BangoYapPrivate
 	// ============================================================================================
 	// Speech(RunMode, Config, Interruptible, Advance) { ... }
 
+	/** The first entry after After that passed (when last worked out), or INDEX_NONE. */
+	static int32 NextPassedEntry(const FBangoCommandCall& Call, int32 After)
+	{
+		for (int32 Index = FMath::Max(After + 1, 0); Index < Call.GetEntryCount(); ++Index)
+		{
+			if (Call.EntryPassed(Index))
+			{
+				return Index;
+			}
+		}
+		return INDEX_NONE;
+	}
+
+	/** One of the entries that passed, at random, or INDEX_NONE. */
+	static int32 PickRandomPassedEntry(const FBangoCommandCall& Call)
+	{
+		TArray<int32> Passed;
+		for (int32 Index = 0; Index < Call.GetEntryCount(); ++Index)
+		{
+			if (Call.EntryPassed(Index))
+			{
+				Passed.Add(Index);
+			}
+		}
+		return Passed.Num() > 0 ? Passed[FMath::RandRange(0, Passed.Num() - 1)] : INDEX_NONE;
+	}
+
 	static void RegisterSpeech()
 	{
 		FBangoCommand Command;
@@ -679,8 +715,9 @@ namespace BangoYapPrivate
 			.Param(TEXT("Interruptible"), FBangoType::Int(), TEXT("Conversations: 1 interruptible, 2 forced; nil: the config's")).MayBeNil()
 			.Param(TEXT("Advance"), FBangoType::Int(), TEXT("Conversations: 1 auto, 2 manual; nil: the config's")).MayBeNil()
 			.Block()
+			.Entries(/*bOptional*/ true)
 			.InCategory(Category)
-			.Describe(TEXT("A group of lines, said one after another (run all), or one of them (select one, select random). In a Conversation block, they're part of the conversation; otherwise free speech."));
+			.Describe(TEXT("A group of lines, said one after another (run all), or one of them (select one, select random). In a Conversation block, they're part of the conversation; otherwise free speech. Its block can be a list of entries (entry if (condition): / entry:), each a line or several: run all plays each entry that passes, select one the first, select random one of them."));
 
 		Command.Start = [](FBangoCommandCall& Call)
 		{
@@ -705,8 +742,38 @@ namespace BangoYapPrivate
 
 			GetCurrentConversation(Call, Header.ConversationID, Header.ConversationName);
 
+			// A list of entries: the speech picks them, and their lines play as they come.
+			if (Call.HasEntries())
+			{
+				Header.bEntries = true;
+				const int32 Entry = Header.RunMode == (int32)ERunMode::SelectRandom ? PickRandomPassedEntry(Call) : NextPassedEntry(Call, -1);
+				if (Entry != INDEX_NONE)
+				{
+					Call.RunEntry(Entry);
+				}
+			}
+
 			*Call.BlockState = RowsToValue({ Header.ToFields() });
 			return EBangoCommandResult::Done;
+		};
+
+		// Run all goes on to the next entry that passes, checked again so that what this one did counts. Select one and
+		// select random play only the one.
+		Command.EntryEnded = [](FBangoCommandCall& Call)
+		{
+			TArray<FFields> Rows;
+			if (!ValueToRows(*Call.BlockState, Rows))
+			{
+				return EBangoCommandResult::Done;
+			}
+			FSpeechHeader Header;
+			Header.FromFields(Rows[0]);
+			if (Header.RunMode != (int32)ERunMode::RunAll)
+			{
+				return EBangoCommandResult::Done;
+			}
+			Call.RecheckEntries();
+			return EBangoCommandResult::Pending; // Poll comes straight away, with the new answers
 		};
 
 		// Select random: the lines reached were gathered in the block's state; one plays now.
@@ -720,7 +787,7 @@ namespace BangoYapPrivate
 
 			FSpeechHeader Header;
 			Header.FromFields(Rows[0]);
-			if (Header.RunMode != (int32)ERunMode::SelectRandom || Rows.Num() < 2)
+			if (Header.bEntries || Header.RunMode != (int32)ERunMode::SelectRandom || Rows.Num() < 2)
 			{
 				return EBangoCommandResult::Done;
 			}
@@ -738,6 +805,17 @@ namespace BangoYapPrivate
 
 		Command.Poll = [](FBangoCommandCall& Call)
 		{
+			// Run all, after an entry's re-check: the next entry that passes now.
+			if (Call.bEntryEnding)
+			{
+				const int32 Next = NextPassedEntry(Call, Call.EntryNumber);
+				if (Next != INDEX_NONE)
+				{
+					Call.RunEntry(Next);
+				}
+				return EBangoCommandResult::Done;
+			}
+
 			TArray<FFields> Rows;
 			if (!Call.bClosing || !ValueToRows(*Call.BlockState, Rows))
 			{
@@ -884,8 +962,12 @@ namespace BangoYapPrivate
 				Line.Advance = Header.Advance;
 			}
 
+			// In a Speech whose block is a list of entries, the speech chose the entry, and its lines just play. Otherwise
+			// the line is one of the speech's choices.
+			const bool bSpeechChooses = Call.BlockState && !Header.bEntries;
+
 			// Select random: gather it; the Speech block's Close plays one.
-			if (Call.BlockState && Header.RunMode == (int32)ERunMode::SelectRandom)
+			if (bSpeechChooses && Header.RunMode == (int32)ERunMode::SelectRandom)
 			{
 				Rows.Add(Line.ToFields());
 				*Call.BlockState = RowsToValue(Rows);
@@ -897,7 +979,7 @@ namespace BangoYapPrivate
 			{
 				Call.LatentState = { FieldsToValue(Line.ToFields()) };
 			}
-			else if (Result == EBangoCommandResult::Done && Call.BlockState && Header.RunMode == (int32)ERunMode::SelectOne)
+			else if (Result == EBangoCommandResult::Done && bSpeechChooses && Header.RunMode == (int32)ERunMode::SelectOne)
 			{
 				Call.EndBlock();
 			}
@@ -924,7 +1006,7 @@ namespace BangoYapPrivate
 				{
 					FSpeechHeader Header;
 					Header.FromFields(Rows[0]);
-					if (Header.RunMode == (int32)ERunMode::SelectOne)
+					if (!Header.bEntries && Header.RunMode == (int32)ERunMode::SelectOne)
 					{
 						Call.EndBlock();
 					}
@@ -1070,10 +1152,27 @@ namespace BangoYapPrivate
 		FPromptHeader Header;
 		Header.FromFields(Rows[0]);
 
+		// With entries: whether a row's entry passes now (the entries are watched while the player chooses).
+		auto RowShown = [&Call, &Header](const FLineRecord& Entry)
+		{
+			return !Header.bEntries || Call.EntryPassed(Entry.EntryNumber);
+		};
+
 		if (Header.Phase < 2)
 		{
 			FYapPromptHandle Prompt = FYapPromptHandle::FromString(Header.PromptHandle);
 			int32 Chosen = INDEX_NONE;
+
+			// Watched entries changed while the player chooses: show the options that have come true, hide the rest.
+			if (Header.bEntries && Call.bEntriesChanged && Prompt.IsValid() && Yap->GetPromptChoice(Prompt, Chosen) && Chosen == INDEX_NONE)
+			{
+				for (int32 Row = 1; Row < Rows.Num(); ++Row)
+				{
+					FLineRecord Entry;
+					Entry.FromFields(Rows[Row]);
+					Yap->SetPromptEntryShown(Prompt, Row - 1, RowShown(Entry));
+				}
+			}
 
 			if (!Prompt.IsValid() || !Yap->GetPromptChoice(Prompt, Chosen))
 			{
@@ -1099,6 +1198,10 @@ namespace BangoYapPrivate
 					FLineRecord Entry;
 					Entry.FromFields(Rows[Row]);
 					Entry.ConversationID.Reset(); // the prompt's conversation is checked above
+					if (!RowShown(Entry))
+					{
+						Request.HiddenEntries.Add(Row - 1);
+					}
 
 					FYapLineRequest& EntryRequest = Request.Entries.AddDefaulted_GetRef();
 					bool bWaiting = false;
@@ -1106,6 +1209,13 @@ namespace BangoYapPrivate
 					{
 						return Call.Fail(FString::Printf(TEXT("Prompt entry %d: %s"), Row, *Error));
 					}
+				}
+
+				// Every option's condition is false for now: wait for one to come true.
+				if (Request.HiddenEntries.Num() == Request.Entries.Num())
+				{
+					Rows[0] = Header.ToFields();
+					return EBangoCommandResult::Pending;
 				}
 
 				if (!Yap->StartPrompt(Request, Prompt, Error))
@@ -1124,10 +1234,29 @@ namespace BangoYapPrivate
 				return EBangoCommandResult::Pending;
 			}
 
+			// Chosen, but its condition stopped holding in the same frame: show the prompt again (next Poll).
+			if (Header.bEntries && Rows.IsValidIndex(Chosen + 1))
+			{
+				FLineRecord Entry;
+				Entry.FromFields(Rows[Chosen + 1]);
+				if (!RowShown(Entry))
+				{
+					Yap->ReleasePrompt(Prompt);
+					Header.PromptHandle.Reset();
+					Header.Phase = 0;
+					Rows[0] = Header.ToFields();
+					return EBangoCommandResult::Pending;
+				}
+			}
+
 			// Chosen: say it.
 			Yap->ReleasePrompt(Prompt);
 			Header.Phase = 2;
 			Header.ChosenRow = Chosen + 1;
+			if (Header.bEntries)
+			{
+				Call.WatchEntries(false);
+			}
 
 			FString Error;
 			if (UYapSpeechConfig* Config = Yap->FindSpeechConfig(Header.ConfigName.IsEmpty() ? NAME_None : FName(*Header.ConfigName), Error))
@@ -1167,8 +1296,10 @@ namespace BangoYapPrivate
 			.Optional()
 			.Param(TEXT("Config"), FBangoType::String(), TEXT("The speech config's name; nil: the project's default")).MayBeNil()
 			.Block()
+			.Entries(/*bOptional*/ true)
+			.EntriesHold(TEXT("AddPrompt"))
 			.InCategory(Category)
-			.Describe(TEXT("Shows the player the PromptEntries reached in its block, and waits for their choice: the chosen entry is said, then its block runs. Must be in a conversation. With no entry reached, does nothing."));
+			.Describe(TEXT("Shows the player the AddPrompts reached in its block, and waits for their choice: the chosen one is said, then its block runs. Must be in a conversation. With none reached, does nothing. Its block can be a list of entries (entry if (condition): / entry:), each holding one AddPrompt: an option is shown while its condition holds, even if it comes true while the player chooses."));
 
 		Command.Start = [](FBangoCommandCall& Call)
 		{
@@ -1186,7 +1317,27 @@ namespace BangoYapPrivate
 				return Call.Fail(TEXT("A Prompt must be in a Conversation block."));
 			}
 
+			// A list of entries: every one runs, passed or not, so each AddPrompt is gathered (and is there to show if
+			// its condition comes true while the player chooses).
+			if (Call.HasEntries())
+			{
+				Header.bEntries = true;
+				if (Call.GetEntryCount() > 0)
+				{
+					Call.RunEntry(0);
+				}
+			}
+
 			*Call.BlockState = RowsToValue({ Header.ToFields() });
+			return EBangoCommandResult::Done;
+		};
+
+		Command.EntryEnded = [](FBangoCommandCall& Call)
+		{
+			if (Call.EntryNumber + 1 < Call.GetEntryCount())
+			{
+				Call.RunEntry(Call.EntryNumber + 1);
+			}
 			return EBangoCommandResult::Done;
 		};
 
@@ -1196,6 +1347,27 @@ namespace BangoYapPrivate
 			if (Call.bLeftEarly || !ValueToRows(*Call.BlockState, Rows) || Rows.Num() < 2)
 			{
 				return EBangoCommandResult::Done; // left early, or no entry was reached
+			}
+
+			FPromptHeader Header;
+			Header.FromFields(Rows[0]);
+			if (Header.bEntries)
+			{
+				// As without entries, a prompt with no option to show at the start does nothing.
+				bool bAnyShown = false;
+				for (int32 Row = 1; Row < Rows.Num() && !bAnyShown; ++Row)
+				{
+					FLineRecord Entry;
+					Entry.FromFields(Rows[Row]);
+					bAnyShown = Call.EntryPassed(Entry.EntryNumber);
+				}
+				if (!bAnyShown)
+				{
+					return EBangoCommandResult::Done;
+				}
+
+				// Watch the conditions while the player chooses.
+				Call.WatchEntries(true);
 			}
 
 			const EBangoCommandResult Result = DrivePrompt(Call, Rows);
@@ -1261,7 +1433,7 @@ namespace BangoYapPrivate
 			.Inside(TEXT("Prompt"))
 			.Block()
 			.InCategory(Category)
-			.Describe(TEXT("One of a prompt's entries: said by a character (an ID, or an actor with a Yap Character Component; or [speaker, directedAt]) when the player chooses it, then its block runs."));
+			.Describe(TEXT("One of a prompt's options: said by a character (an ID, or an actor with a Yap Character Component; or [speaker, directedAt]) when the player chooses it, then its block runs. In a Prompt's entry (entry if (condition):), it's shown while the condition holds."));
 
 		FBangoCommand Command;
 		Command.Signature = Signature;
@@ -1306,6 +1478,7 @@ namespace BangoYapPrivate
 			Entry.ConversationID = Header.ConversationID;
 			Entry.ConversationName = Header.ConversationName;
 			Entry.BlockNumber = Call.BlockNumber;
+			Entry.EntryNumber = Call.BlockEntryNumber;
 
 			Rows.Add(Entry.ToFields());
 			*Call.OuterBlockState = RowsToValue(Rows);

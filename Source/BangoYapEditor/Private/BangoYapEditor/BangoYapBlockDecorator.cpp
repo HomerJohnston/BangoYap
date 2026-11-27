@@ -46,6 +46,11 @@ TSharedPtr<SWidget> FBangoYapBlockDecorator::MakeExtraContent(const FBangoNodeDe
 		.Data(FBangoYapBlockData::FromContext(Context));
 }
 
+TSharedPtr<SWidget> FBangoYapBlockDecorator::MakeEntryRowWidget(const FBangoNodeDecoratorContext& Context, int32 Entry)
+{
+	return SBangoYapEntryRow::Make(Context, Entry);
+}
+
 bool FBangoYapBlockDecorator::HidesField(const FBangoNodeDecoratorContext& Context, int32 FieldIndex) const
 {
 	return FBangoYapBlockData::HeaderCoversField(Context, FieldIndex);

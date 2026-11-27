@@ -486,4 +486,128 @@ TSharedRef<SWidget> SBangoYapBlockHeader::MakeNameBox()
 		});
 }
 
+// ================================================================================================ Entry rows
+
+TSharedRef<SWidget> SBangoYapEntryRow::Make(const FBangoNodeDecoratorContext& Context, int32 Entry)
+{
+	TSharedPtr<SWidget> Condition;
+	if (Context.MakeEntryConditionWidget)
+	{
+		Condition = Context.MakeEntryConditionWidget(Entry);
+	}
+	else
+	{
+		// Not editable here: the condition as written.
+		const FString Text = Context.EntryConditions.IsValidIndex(Entry) ? Context.EntryConditions[Entry] : FString();
+		Condition = SNew(STextBlock)
+			.Text(Text.IsEmpty() ? LOCTEXT("EntryRow_Always", "Always") : FText::FromString(Text))
+			.ColorAndOpacity(Text.IsEmpty() ? BangoYapColor::Gray : BangoYapColor::LightGray);
+	}
+
+	return SNew(SBangoYapEntryRow)
+		.Data(FBangoYapBlockData::FromContext(Context))
+		.Entry(Entry)
+		.ConditionWidget(Condition)
+		.bDisabled(Context.EntryDisabled.IsValidIndex(Entry) && Context.EntryDisabled[Entry])
+		.bHasDebug(Context.bHasEntryDebug)
+		.bDebugPassed(!Context.bHasEntryDebug || (Context.DebugEntryPassed.IsValidIndex(Entry) && Context.DebugEntryPassed[Entry]))
+		.bDebugRunning(Context.bHasEntryDebug && Context.DebugRunningEntry == Entry);
+}
+
+void SBangoYapEntryRow::Construct(const FArguments& InArgs)
+{
+	using namespace BangoYapBlockHeaderPrivate;
+
+	const FBangoYapBlockData& Data = InArgs._Data;
+	const int32 Entry = InArgs._Entry;
+	const bool bPrompt = Data.Kind == EBangoYapBlockKind::Prompt;
+	const int32 Mode = GetRunMode(Data.RunMode);
+
+	// The badge: the entry's number, in the run mode's colour (a prompt's options in Yap's prompt title colour).
+	const FLinearColor BadgeColor = bPrompt ? BangoYapColor::YellowGray : SequencingColor(Mode);
+
+	FText BadgeToolTip;
+	if (bPrompt)
+	{
+		BadgeToolTip = LOCTEXT("EntryRow_Prompt", "An option: its AddPrompt is shown while its condition holds (watched while the player chooses).");
+	}
+	else
+	{
+		switch (Mode)
+		{
+			case SelectOne: BadgeToolTip = LOCTEXT("EntryRow_SelectOne", "Select one: the first entry whose condition holds plays, and only it."); break;
+			case SelectRandom: BadgeToolTip = LOCTEXT("EntryRow_SelectRandom", "Select random: one of the entries whose condition holds plays, picked at random."); break;
+			case RunAll: BadgeToolTip = LOCTEXT("EntryRow_RunAll", "Run all: each entry plays in turn if its condition holds when the speech gets to it."); break;
+			default: BadgeToolTip = LOCTEXT("EntryRow_Unknown", "The run mode is only known while playing."); break;
+		}
+	}
+	if (InArgs._bHasDebug)
+	{
+		BadgeToolTip = FText::Format(LOCTEXT("EntryRow_Debug", "{0}\n{1}"), BadgeToolTip,
+			InArgs._bDebugRunning ? LOCTEXT("EntryRow_Running", "Playing now.")
+			: InArgs._bDebugPassed ? LOCTEXT("EntryRow_Passed", "Its condition held when last checked.")
+			: LOCTEXT("EntryRow_NotPassed", "Its condition didn't hold when last checked."));
+	}
+
+	const bool bDim = InArgs._bDisabled || (InArgs._bHasDebug && !InArgs._bDebugPassed);
+
+	ChildSlot
+	[
+		SNew(SBox)
+		.MinDesiredWidth(220)
+		.RenderOpacity(bDim ? 0.4f : 1.0f)
+		[
+			SNew(SOverlay)
+			+ SOverlay::Slot()
+			[
+				SNew(SBorder)
+				.BorderImage(FBangoYapEditorStyle::GetBrush(FBangoYapEditorStyle::Box_SolidWhite_Rounded))
+				.BorderBackgroundColor(BangoYapColor::DarkGray_SemiGlass)
+				.Padding(FMargin(4, 2))
+				[
+					SNew(SHorizontalBox)
+					+ SHorizontalBox::Slot()
+					.AutoWidth()
+					.VAlign(VAlign_Center)
+					.Padding(0, 0, 6, 0)
+					[
+						SNew(SBox)
+						.WidthOverride(20)
+						.HeightOverride(20)
+						.ToolTipText(BadgeToolTip)
+						[
+							SNew(SBorder)
+							.BorderImage(FBangoYapEditorStyle::GetBrush(FBangoYapEditorStyle::Box_SolidWhite_Rounded))
+							.BorderBackgroundColor(BadgeColor.CopyWithNewOpacity(0.6f))
+							.HAlign(HAlign_Center)
+							.VAlign(VAlign_Center)
+							.Padding(0)
+							[
+								SNew(STextBlock)
+								.Text(FText::AsNumber(Entry + 1))
+								.Font(FCoreStyle::GetDefaultFontStyle("Bold", 9))
+								.ColorAndOpacity(BangoYapColor::White)
+							]
+						]
+					]
+					+ SHorizontalBox::Slot()
+					.FillWidth(1.0f)
+					.VAlign(VAlign_Center)
+					[
+						InArgs._ConditionWidget.IsValid() ? InArgs._ConditionWidget.ToSharedRef() : SNullWidget::NullWidget
+					]
+				]
+			]
+			// As Yap's fragment highlight, while the debugger shows this entry running.
+			+ SOverlay::Slot()
+			[
+				SNew(SBorder)
+				.Visibility(InArgs._bDebugRunning ? EVisibility::HitTestInvisible : EVisibility::Collapsed)
+				.BorderImage(FAppStyle::GetBrush("Graph.StateNode.Body"))
+				.BorderBackgroundColor(BangoYapColor::White_Glass)
+			]
+		]
+	];
+}
+
 #undef LOCTEXT_NAMESPACE
