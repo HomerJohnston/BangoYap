@@ -51,6 +51,8 @@ public:
 	/** Yap's select-random icon, for the sequencing button. */
 	static const FName Icon_Random;
 
+	/** Yap's ButtonStyle_FragmentControls: the dark buttons that hang outside a row (move up, delete, move down). */
+	static const FName ButtonStyle_RowControls;
 	/** Yap's ButtonStyle_TimeSetting: a rounded box tinted by the button's colour. */
 	static const FName ButtonStyle_TimeSetting;
 

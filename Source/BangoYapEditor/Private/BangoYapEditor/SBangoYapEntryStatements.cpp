@@ -4,12 +4,14 @@
 #include "BangoYapEditorStyle.h"
 #include "BangoYapFieldWriter.h"
 #include "BangoYapNodeFields.h"
+#include "Editor.h"
 #include "Framework/Application/SlateApplication.h"
 #include "SBangoYapLineRow.h"
 #include "Styling/AppStyle.h"
 #include "Styling/CoreStyle.h"
 #include "Widgets/Images/SImage.h"
 #include "Widgets/Input/SButton.h"
+#include "Widgets/Layout/SBorder.h"
 #include "Widgets/Layout/SBox.h"
 #include "Widgets/SBoxPanel.h"
 #include "Widgets/SOverlay.h"
@@ -126,53 +128,49 @@ TSharedRef<SWidget> SBangoYapEntryStatements::MakeStatement(const FBangoNodeDeco
 		Pin = SNew(SBox).WidthOverride(Bango::NodePins::EdgeInset * 2.0f);
 	}
 
-	TSharedPtr<SBorder> Holder;
-
+	// The controls, as Yap's fragment controls: up, delete, down (and here, disable), stacked, hanging outside the node
+	// at its left while the pointer's over the statement (or them).
+	constexpr float IconSize = 16.0f;
+	constexpr float ButtonSize = IconSize + 6.0f;
 	TSharedRef<SVerticalBox> Tools = SNew(SVerticalBox);
-	auto AddTool = [&](const FName& Icon, const FText& Tip, TFunction<void()> OnClicked, bool bEnabled)
+	auto AddTool = [&](const FName& Icon, const FText& Tip, TFunction<void()> OnClicked, bool bEnabled, float TopGap)
 	{
 		Tools->AddSlot()
 		.AutoHeight()
-		.Padding(0, 1)
+		.HAlign(HAlign_Center)
+		.Padding(0, TopGap, 0, 0)
 		[
-			MakeTool(Icon, Tip, MoveTemp(OnClicked), bEnabled)
+			MakeRowControl(Icon, Tip, MoveTemp(OnClicked), bEnabled, IconSize)
 		];
 	};
 	const TWeakPtr<SBangoYapEntryStatements> WeakThis = SharedThis(this);
 	AddTool(TEXT("Icons.ChevronUp"), LOCTEXT("Statement_Up", "Move up (into the entry before, from the top)"),
-		[WeakThis, Index]() { if (TSharedPtr<SBangoYapEntryStatements> This = WeakThis.Pin()) { This->Move(Index, -1); } }, bCanUp);
+		[WeakThis, Index]() { if (TSharedPtr<SBangoYapEntryStatements> This = WeakThis.Pin()) { This->Move(Index, -1); } }, bCanUp, 0.0f);
+	AddTool(TEXT("Icons.Delete"), bPrompt ? LOCTEXT("Statement_RemoveOption", "Remove the option (and its block)") : LOCTEXT("Statement_RemoveLine", "Remove the line"),
+		[WeakThis, Index]() { if (TSharedPtr<SBangoYapEntryStatements> This = WeakThis.Pin()) { This->Remove(Index); } }, true, 2.0f);
 	AddTool(TEXT("Icons.ChevronDown"), LOCTEXT("Statement_Down", "Move down (into the entry after, from the bottom)"),
-		[WeakThis, Index]() { if (TSharedPtr<SBangoYapEntryStatements> This = WeakThis.Pin()) { This->Move(Index, 1); } }, bCanDown);
+		[WeakThis, Index]() { if (TSharedPtr<SBangoYapEntryStatements> This = WeakThis.Pin()) { This->Move(Index, 1); } }, bCanDown, 2.0f);
 	AddTool(bStatementDisabled ? TEXT("Icons.Hidden") : TEXT("Icons.Visible"),
 		bStatementDisabled ? LOCTEXT("Statement_Enable", "Enable") : LOCTEXT("Statement_Disable", "Disable (it's skipped)"),
-		[WeakThis, Index, bStatementDisabled]() { if (TSharedPtr<SBangoYapEntryStatements> This = WeakThis.Pin()) { This->SetDisabled(Index, !bStatementDisabled); } }, true);
-	AddTool(TEXT("Icons.Delete"), bPrompt ? LOCTEXT("Statement_RemoveOption", "Remove the option (and its block)") : LOCTEXT("Statement_RemoveLine", "Remove the line"),
-		[WeakThis, Index]() { if (TSharedPtr<SBangoYapEntryStatements> This = WeakThis.Pin()) { This->Remove(Index); } }, true);
+		[WeakThis, Index, bStatementDisabled]() { if (TSharedPtr<SBangoYapEntryStatements> This = WeakThis.Pin()) { This->SetDisabled(Index, !bStatementDisabled); } }, true, 8.0f);
+
+	// From the controls to the statement: the gap outside the node, then the statement's indent inside it. Covered by
+	// the controls' holder, so the pointer can cross it without the controls going.
+	const float ControlsReach = ButtonSize + ControlsGap + StatementIndent;
+	TSharedPtr<SOverlay> RowOverlay;
 
 	const double FlashStart = FSlateApplication::Get().GetCurrentTime();
 
-	TSharedRef<SWidget> Row = SNew(SOverlay)
+	TSharedRef<SWidget> Row = SAssignNew(RowOverlay, SOverlay)
 		+ SOverlay::Slot()
 		[
-			SAssignNew(Holder, SBorder)
+			SNew(SBorder)
 			.BorderImage(FBangoYapEditorStyle::GetBrush(FBangoYapEditorStyle::Box_SolidWhite_Rounded))
 			.BorderBackgroundColor(FLinearColor::Transparent)
 			.Padding(0)
 			.ToolTipText(StatementTip.IsEmpty() ? FText::GetEmpty() : FText::FromString(StatementTip))
 			[
 				SNew(SHorizontalBox)
-				// The tools, shown while the pointer's over the statement.
-				+ SHorizontalBox::Slot()
-				.AutoWidth()
-				.VAlign(VAlign_Center)
-				.Padding(0, 0, 2, 0)
-				[
-					SNew(SBox)
-					.WidthOverride(16)
-					[
-						Tools
-					]
-				]
 				+ SHorizontalBox::Slot()
 				.FillWidth(1.0f)
 				[
@@ -218,22 +216,44 @@ TSharedRef<SWidget> SBangoYapEntryStatements::MakeStatement(const FBangoNodeDeco
 			})
 		];
 
-	// The tools show while the pointer's over the statement (and stay hit-testable then).
-	const TWeakPtr<SBorder> WeakHolder = Holder;
-	Tools->SetVisibility(TAttribute<EVisibility>::CreateLambda([WeakHolder]()
-	{
-		const TSharedPtr<SBorder> Pinned = WeakHolder.Pin();
-		return Pinned.IsValid() && Pinned->IsHovered() ? EVisibility::Visible : EVisibility::Hidden;
-	}));
+	// The controls, outside the node at its left (as Yap's: an overlay slot with a negative left padding; a graph
+	// node doesn't clip its children, so they're drawn and clicked out there).
+	const TWeakPtr<SOverlay> WeakRow = RowOverlay;
+	RowOverlay->AddSlot()
+	.HAlign(HAlign_Left)
+	.VAlign(VAlign_Center)
+	.Padding(-ControlsReach, 0, 0, 0)
+	[
+		SNew(SBorder)
+		.BorderImage(FAppStyle::GetNoBrush())
+		.Padding(FMargin(0, 0, ControlsGap + StatementIndent, 0))
+		.Cursor(EMouseCursor::Default)
+		.Visibility_Lambda([WeakRow]()
+		{
+			// Shown while the pointer's over the statement or the controls (they're in its overlay); not while a game
+			// plays in the editor (as Yap's).
+			const TSharedPtr<SOverlay> Pinned = WeakRow.Pin();
+			const bool bPlaying = GEditor && GEditor->PlayWorld;
+			return Pinned.IsValid() && Pinned->IsHovered() && !bPlaying ? EVisibility::Visible : EVisibility::Collapsed;
+		})
+		[
+			SNew(SBox)
+			.WidthOverride(ButtonSize)
+			[
+				Tools
+			]
+		]
+	];
 
 	return Row;
 }
 
-TSharedRef<SWidget> SBangoYapEntryStatements::MakeTool(const FName& Icon, const FText& ToolTipText, TFunction<void()> OnClicked, bool bEnabled) const
+TSharedRef<SWidget> SBangoYapEntryStatements::MakeRowControl(const FName& Icon, const FText& ToolTipText, TFunction<void()> OnClicked, bool bEnabled, float IconSize)
 {
 	return SNew(SButton)
-		.ButtonStyle(FAppStyle::Get(), "SimpleButton")
-		.ContentPadding(0)
+		.Cursor(EMouseCursor::Default)
+		.ButtonStyle(FBangoYapEditorStyle::Get(), FBangoYapEditorStyle::ButtonStyle_RowControls)
+		.ContentPadding(FMargin(3, 3))
 		.IsEnabled(bEnabled)
 		.ToolTipText(ToolTipText)
 		.OnClicked_Lambda([OnClicked]()
@@ -244,7 +264,7 @@ TSharedRef<SWidget> SBangoYapEntryStatements::MakeTool(const FName& Icon, const 
 		[
 			SNew(SImage)
 			.Image(FAppStyle::GetBrush(Icon))
-			.DesiredSizeOverride(FVector2D(12, 12))
+			.DesiredSizeOverride(FVector2D(IconSize, IconSize))
 			.ColorAndOpacity(FSlateColor::UseForeground())
 		];
 }

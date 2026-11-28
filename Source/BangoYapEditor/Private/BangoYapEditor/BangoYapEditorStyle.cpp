@@ -33,6 +33,7 @@ const FName FBangoYapEditorStyle::Bar_PositivePadding(TEXT("BangoYap.Bar_Positiv
 const FName FBangoYapEditorStyle::Icon_PlaybackTimeHandle(TEXT("BangoYap.Icon_PlaybackTimeHandle"));
 const FName FBangoYapEditorStyle::Icon_Random(TEXT("BangoYap.Icon_Random"));
 const FName FBangoYapEditorStyle::ButtonStyle_TimeSetting(TEXT("BangoYap.ButtonStyle_TimeSetting"));
+const FName FBangoYapEditorStyle::ButtonStyle_RowControls(TEXT("BangoYap.ButtonStyle_RowControls"));
 
 FName FBangoYapEditorStyle::GetStyleSetName()
 {
@@ -95,6 +96,20 @@ void FBangoYapEditorStyle::Initialize()
 		.SetNormalForeground(BangoYapColor::DimWhite)
 		.SetHoveredForeground(BangoYapColor::White)
 		.SetPressedForeground(BangoYapColor::LightGray)
+		.SetNormalPadding(FMargin(0))
+		.SetPressedPadding(FMargin(0, 1, 0, -1)));
+
+	// As Yap's ButtonStyle_FragmentControls: dark grey, darker when pressed (pushed down a pixel), the icon glassy
+	// until hovered.
+	Style->Set(ButtonStyle_RowControls, FButtonStyle(FAppStyle::Get().GetWidgetStyle<FButtonStyle>("Button"))
+		.SetNormal(FSlateRoundedBoxBrush(BangoYapColor::DarkGray, 4.0f))
+		.SetHovered(FSlateRoundedBoxBrush(FLinearColor(0.07f, 0.07f, 0.07f, 1.0f), 4.0f))
+		.SetPressed(FSlateRoundedBoxBrush(FLinearColor(0.01f, 0.01f, 0.01f, 1.0f), 4.0f))
+		.SetDisabled(FSlateRoundedBoxBrush(BangoYapColor::DarkGray.CopyWithNewOpacity(0.5f), 4.0f))
+		.SetNormalForeground(FLinearColor(1.0f, 1.0f, 1.0f, 0.5f))
+		.SetHoveredForeground(BangoYapColor::White)
+		.SetPressedForeground(BangoYapColor::LightGray)
+		.SetDisabledForeground(FLinearColor(1.0f, 1.0f, 1.0f, 0.15f))
 		.SetNormalPadding(FMargin(0))
 		.SetPressedPadding(FMargin(0, 1, 0, -1)));
 

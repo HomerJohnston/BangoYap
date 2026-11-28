@@ -5,6 +5,7 @@
 #include "BangoYapLineTiming.h"
 #include "SBangoYapEntryStatements.h"
 #include "SBangoYapLineSettings.h"
+#include "Editor.h"
 #include "Framework/MultiBox/MultiBoxBuilder.h"
 #include "Styling/AppStyle.h"
 #include "Styling/CoreStyle.h"
@@ -12,9 +13,11 @@
 #include "Widgets/Input/SButton.h"
 #include "Widgets/Input/SComboButton.h"
 #include "Widgets/Input/SEditableText.h"
+#include "Widgets/Layout/SBorder.h"
 #include "Widgets/Layout/SBox.h"
 #include "Widgets/SBoxPanel.h"
 #include "Widgets/SNullWidget.h"
+#include "Widgets/SOverlay.h"
 #include "Widgets/Text/STextBlock.h"
 #include "YapBase/YapSpeechConfig.h"
 
@@ -518,26 +521,6 @@ TSharedRef<SWidget> SBangoYapEntryRow::Make(const FBangoNodeDecoratorContext& Co
 
 namespace BangoYapEntryRowPrivate
 {
-	TSharedRef<SWidget> MakeEntryTool(const FName& Icon, const FText& ToolTipText, TFunction<void()> OnClicked, bool bEnabled)
-	{
-		return SNew(SButton)
-			.ButtonStyle(FAppStyle::Get(), "SimpleButton")
-			.ContentPadding(FMargin(1, 0))
-			.IsEnabled(bEnabled)
-			.ToolTipText(ToolTipText)
-			.OnClicked_Lambda([OnClicked]()
-			{
-				OnClicked();
-				return FReply::Handled();
-			})
-			[
-				SNew(SImage)
-				.Image(FAppStyle::GetBrush(Icon))
-				.DesiredSizeOverride(FVector2D(12, 12))
-				.ColorAndOpacity(FSlateColor::UseForeground())
-			];
-	}
-
 	TSharedRef<SWidget> MakeAddButton(const FText& Label, const FText& Tip, TFunction<void()> OnClicked)
 	{
 		return SNew(SButton)
@@ -647,37 +630,40 @@ TSharedRef<SWidget> SBangoYapEntryRow::MakeRow(const FBangoNodeDecoratorContext&
 	if (!bDefault && Context.MoveEntry)
 	{
 		TFunction<void(int32, int32)> MoveEntry = Context.MoveEntry;
-		Tools->AddSlot().AutoWidth()
+		Tools->AddSlot().AutoWidth().Padding(Tools->NumSlots() > 1 ? 2.0f : 0.0f, 0, 0, 0)
 		[
-			MakeEntryTool(TEXT("Icons.ChevronUp"), LOCTEXT("Entry_Up", "Move the entry up"), [MoveEntry, Entry]() { MoveEntry(Entry, -1); }, Entry > 0)
+			SBangoYapEntryStatements::MakeRowControl(TEXT("Icons.ChevronUp"), LOCTEXT("Entry_Up", "Move the entry up"), [MoveEntry, Entry]() { MoveEntry(Entry, -1); }, Entry > 0, 12.0f)
 		];
-		Tools->AddSlot().AutoWidth()
+		Tools->AddSlot().AutoWidth().Padding(Tools->NumSlots() > 1 ? 2.0f : 0.0f, 0, 0, 0)
 		[
-			MakeEntryTool(TEXT("Icons.ChevronDown"), LOCTEXT("Entry_Down", "Move the entry down"), [MoveEntry, Entry]() { MoveEntry(Entry, 1); }, Entry < LastMovable)
+			SBangoYapEntryStatements::MakeRowControl(TEXT("Icons.ChevronDown"), LOCTEXT("Entry_Down", "Move the entry down"), [MoveEntry, Entry]() { MoveEntry(Entry, 1); }, Entry < LastMovable, 12.0f)
 		];
 	}
 	if (Context.SetEntryDisabled)
 	{
 		TFunction<void(int32, bool)> SetEntryDisabled = Context.SetEntryDisabled;
-		Tools->AddSlot().AutoWidth()
+		Tools->AddSlot().AutoWidth().Padding(Tools->NumSlots() > 1 ? 2.0f : 0.0f, 0, 0, 0)
 		[
-			MakeEntryTool(bEntryDisabled ? TEXT("Icons.Hidden") : TEXT("Icons.Visible"),
+			SBangoYapEntryStatements::MakeRowControl(bEntryDisabled ? TEXT("Icons.Hidden") : TEXT("Icons.Visible"),
 				bEntryDisabled ? LOCTEXT("Entry_Enable", "Enable the entry") : LOCTEXT("Entry_Disable", "Disable the entry (it's left out)"),
-				[SetEntryDisabled, Entry, bEntryDisabled]() { SetEntryDisabled(Entry, !bEntryDisabled); }, true)
+				[SetEntryDisabled, Entry, bEntryDisabled]() { SetEntryDisabled(Entry, !bEntryDisabled); }, true, 12.0f)
 		];
 	}
 	if (Context.RemoveEntry)
 	{
 		TFunction<void(int32)> RemoveEntry = Context.RemoveEntry;
-		Tools->AddSlot().AutoWidth()
+		Tools->AddSlot().AutoWidth().Padding(Tools->NumSlots() > 1 ? 2.0f : 0.0f, 0, 0, 0)
 		[
-			MakeEntryTool(TEXT("Icons.Delete"), bInRow ? LOCTEXT("Entry_RemoveInRow", "Remove the entry, with its lines or options") : LOCTEXT("Entry_Remove", "Remove the entry (its wire goes; the nodes on it stay)"),
-				[RemoveEntry, Entry]() { RemoveEntry(Entry); }, true)
+			SBangoYapEntryStatements::MakeRowControl(TEXT("Icons.Delete"), bInRow ? LOCTEXT("Entry_RemoveInRow", "Remove the entry, with its lines or options") : LOCTEXT("Entry_Remove", "Remove the entry (its wire goes; the nodes on it stay)"),
+				[RemoveEntry, Entry]() { RemoveEntry(Entry); }, true, 12.0f)
 		];
 	}
 
-	TSharedPtr<SBox> ConditionRow;
-	const TSharedRef<SWidget> Header = SAssignNew(ConditionRow, SBox)
+	// The entry's controls hang outside the node at its left, as a statement's do (Yap's fragment controls), in a
+	// row: the condition row is short. Its holder covers the gap to the node, so the pointer can cross it.
+	TSharedPtr<SOverlay> ConditionRow;
+	const TSharedRef<SWidget> Header = SAssignNew(ConditionRow, SOverlay)
+		+ SOverlay::Slot()
 		[
 			SNew(SHorizontalBox)
 			+ SHorizontalBox::Slot()
@@ -685,13 +671,6 @@ TSharedRef<SWidget> SBangoYapEntryRow::MakeRow(const FBangoNodeDecoratorContext&
 			.Padding(Bango::NodePins::EdgeInset, 0, 4, 0)
 			[
 				Make(Context, Entry)
-			]
-			+ SHorizontalBox::Slot()
-			.AutoWidth()
-			.VAlign(VAlign_Center)
-			.Padding(0, 0, 4, 0)
-			[
-				Tools
 			]
 			+ SHorizontalBox::Slot()
 			.AutoWidth()
@@ -705,12 +684,34 @@ TSharedRef<SWidget> SBangoYapEntryRow::MakeRow(const FBangoNodeDecoratorContext&
 				]
 			]
 		];
-	const TWeakPtr<SBox> WeakRow = ConditionRow;
-	Tools->SetVisibility(TAttribute<EVisibility>::CreateLambda([WeakRow]()
+	const TWeakPtr<SOverlay> WeakRow = ConditionRow;
+	// The rows area starts half a pin outside the node's body, so the controls go left of that, with the gap.
+	const float ControlsGap = FMath::Max(0.0f, SBangoYapEntryStatements::ControlsGap - Bango::NodePins::EdgeInset);
 	{
-		const TSharedPtr<SBox> Pinned = WeakRow.Pin();
-		return Pinned.IsValid() && Pinned->IsHovered() ? EVisibility::Visible : EVisibility::Hidden;
-	}));
+		// Each control: a 12 px icon in 3 px of padding, with 2 px between them.
+		const int32 ControlCount = Tools->NumSlots();
+		const float ControlsWidth = ControlCount * 18.0f + FMath::Max(0, ControlCount - 1) * 2.0f;
+		const float Reach = ControlsWidth + ControlsGap;
+		ConditionRow->AddSlot()
+		.HAlign(HAlign_Left)
+		.VAlign(VAlign_Center)
+		.Padding(-Reach, 0, 0, 0)
+		[
+			SNew(SBorder)
+			.BorderImage(FAppStyle::GetNoBrush())
+			.Padding(FMargin(0, 0, ControlsGap, 0))
+			.Cursor(EMouseCursor::Default)
+			.Visibility_Lambda([WeakRow]()
+			{
+				const TSharedPtr<SOverlay> Pinned = WeakRow.Pin();
+				const bool bPlaying = GEditor && GEditor->PlayWorld;
+				return Pinned.IsValid() && Pinned->IsHovered() && !bPlaying ? EVisibility::Visible : EVisibility::Collapsed;
+			})
+			[
+				Tools
+			]
+		];
+	}
 
 	if (!bInRow)
 	{
@@ -726,7 +727,7 @@ TSharedRef<SWidget> SBangoYapEntryRow::MakeRow(const FBangoNodeDecoratorContext&
 		]
 		+ SVerticalBox::Slot()
 		.AutoHeight()
-		.Padding(Bango::NodePins::EdgeInset + 12.0f, 2.0f, 0.0f, 4.0f)
+		.Padding(Bango::NodePins::EdgeInset + SBangoYapEntryStatements::StatementIndent, 2.0f, 0.0f, 4.0f)
 		[
 			SNew(SBox)
 			.RenderOpacity(bEntryDisabled ? 0.4f : 1.0f)

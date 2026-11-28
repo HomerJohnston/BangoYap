@@ -8,8 +8,9 @@ struct FBangoNodeDecoratorContext;
 /**
  * The lines or options of one entry of a Speech or Prompt, drawn in the entry's row (Bango v0.143,
  * IBangoNodeDecorator::DrawsEntryStatements) rather than as nodes wired from its pin: each statement is an
- * SBangoYapLineRow, as its own node would be (it edits the line in place), with, on hover, buttons to move it up or
- * down (into the entry before or after at the ends), disable it and remove it; an AddPrompt's output pin (to its
+ * SBangoYapLineRow, as its own node would be (it edits the line in place), with, on hover, buttons hanging outside the
+ * node at its left (as Yap's fragment controls) to move it up, remove it, move it down (into the entry before or after
+ * at the ends) and disable it; an AddPrompt's output pin (to its
  * block) is at its right end, on the node's edge (Bango v0.144, MakePinWidget). Under them, buttons to add a line (Say), a mature line (SayM) or an option (AddPrompt).
  *
  * A disabled statement is faded; a statement's comment is its tooltip; an error gives it a red outline (the error's
@@ -24,12 +25,22 @@ public:
 	SLATE_BEGIN_ARGS(SBangoYapEntryStatements) {}
 	SLATE_END_ARGS()
 
+	/** How far a statement row starts in from the rows area's left (past half a pin, which is the node's edge). */
+	static constexpr float StatementIndent = 12.0f;
+	/** The gap between the controls hanging outside the node and the node's edge. */
+	static constexpr float ControlsGap = 6.0f;
+
+	/**
+	 * One of the buttons that hang outside a row, left of the node (as Yap's fragment controls): Yap's dark button,
+	 * the icon IconSize square.
+	 */
+	static TSharedRef<SWidget> MakeRowControl(const FName& Icon, const FText& ToolTipText, TFunction<void()> OnClicked, bool bEnabled, float IconSize);
+
 	/** Must be made in MakeRowsArea (the statements' pins are placed there, at the rows' right ends: the node's edge). */
 	void Construct(const FArguments& InArgs, const FBangoNodeDecoratorContext& Context, int32 InEntry);
 
 private:
 	TSharedRef<SWidget> MakeStatement(const FBangoNodeDecoratorContext& Context, int32 Index);
-	TSharedRef<SWidget> MakeTool(const FName& Icon, const FText& ToolTipText, TFunction<void()> OnClicked, bool bEnabled = true) const;
 	TSharedRef<SWidget> MakeAddButtons();
 
 	/** A new statement's text: a new line ID, said by the speaker of the line before it (or of any line in the node). */
