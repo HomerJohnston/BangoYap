@@ -193,10 +193,12 @@ namespace BangoYapPrivate
 		int32 RunningRow = 0;
 		/** The block is a list of entries (entry if (...): / entry:): the Speech chooses the entries, and its lines just play. */
 		bool bEntries = false;
+		/** Run all with entries: an entry other than the default has played (so the default doesn't). */
+		bool bPlayedEntry = false;
 
 		FFields ToFields() const
 		{
-			return { ToField(RunMode), ToField(ConfigName), ToField(Interruptible), ToField(Advance), ToField(ConversationID), ToField(ConversationName), ToField(RunningRow), ToField(bEntries) };
+			return { ToField(RunMode), ToField(ConfigName), ToField(Interruptible), ToField(Advance), ToField(ConversationID), ToField(ConversationName), ToField(RunningRow), ToField(bEntries), ToField(bPlayedEntry) };
 		}
 
 		void FromFields(const FFields& Fields)
@@ -209,6 +211,7 @@ namespace BangoYapPrivate
 			ConversationName = FieldString(Fields, 5);
 			RunningRow = FieldInt(Fields, 6);
 			bEntries = FieldBool(Fields, 7);
+			bPlayedEntry = Fields.IsValidIndex(8) && FieldBool(Fields, 8);
 		}
 	};
 
@@ -749,6 +752,7 @@ namespace BangoYapPrivate
 				const int32 Entry = Header.RunMode == (int32)ERunMode::SelectRandom ? PickRandomPassedEntry(Call) : NextPassedEntry(Call, -1);
 				if (Entry != INDEX_NONE)
 				{
+					Header.bPlayedEntry = !Call.EntryIsDefault(Entry);
 					Call.RunEntry(Entry);
 				}
 			}
@@ -805,14 +809,31 @@ namespace BangoYapPrivate
 
 		Command.Poll = [](FBangoCommandCall& Call)
 		{
-			// Run all, after an entry's re-check: the next entry that passes now.
+			// Run all, after an entry's re-check: the next entry that passes now. The default (default:) plays only if no
+			// other entry has: after one has, the re-check can find none of the rest passing, and the default with them.
 			if (Call.bEntryEnding)
 			{
-				const int32 Next = NextPassedEntry(Call, Call.EntryNumber);
-				if (Next != INDEX_NONE)
+				TArray<FFields> EntryRows;
+				FSpeechHeader EntryHeader;
+				const bool bHasHeader = ValueToRows(*Call.BlockState, EntryRows);
+				if (bHasHeader)
 				{
-					Call.RunEntry(Next);
+					EntryHeader.FromFields(EntryRows[0]);
 				}
+
+				const int32 Next = NextPassedEntry(Call, Call.EntryNumber);
+				if (Next == INDEX_NONE || (Call.EntryIsDefault(Next) && EntryHeader.bPlayedEntry))
+				{
+					return EBangoCommandResult::Done;
+				}
+
+				if (bHasHeader && !Call.EntryIsDefault(Next))
+				{
+					EntryHeader.bPlayedEntry = true;
+					EntryRows[0] = EntryHeader.ToFields();
+					*Call.BlockState = RowsToValue(EntryRows);
+				}
+				Call.RunEntry(Next);
 				return EBangoCommandResult::Done;
 			}
 

@@ -87,7 +87,7 @@ private:
 
 /**
  * One entry's row of a Speech or Prompt whose block is a list of entries (Bango v0.140), beside the entry's output
- * pin: a numbered badge in the run mode's colour (a prompt's in Yap's title colour), then the entry's condition box
+ * pin: a numbered badge in the run mode's colour (a prompt's in Yap's title colour; a grey "D" for the default), then the entry's condition box
  * (the graph editor's own, from FBangoNodeDecoratorContext::MakeEntryConditionWidget: typing, Tab, the hint Always,
  * the red outline for an error), on Yap's dark rounded panel.
  *
@@ -99,6 +99,7 @@ class SBangoYapEntryRow : public SCompoundWidget
 public:
 	SLATE_BEGIN_ARGS(SBangoYapEntryRow)
 		: _Entry(0)
+		, _bDefault(false)
 		, _bDisabled(false)
 		, _bHasDebug(false)
 		, _bDebugPassed(true)
@@ -107,6 +108,8 @@ public:
 		SLATE_ARGUMENT(FBangoYapBlockData, Data)
 		SLATE_ARGUMENT(int32, Entry)
 		SLATE_ARGUMENT(TSharedPtr<SWidget>, ConditionWidget)
+		/** The default entry (default:), which passes when none of the others does. */
+		SLATE_ARGUMENT(bool, bDefault)
 		SLATE_ARGUMENT(bool, bDisabled)
 		SLATE_ARGUMENT(bool, bHasDebug)
 		SLATE_ARGUMENT(bool, bDebugPassed)

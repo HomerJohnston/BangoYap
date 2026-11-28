@@ -500,7 +500,7 @@ TSharedRef<SWidget> SBangoYapEntryRow::Make(const FBangoNodeDecoratorContext& Co
 		// Not editable here: the condition as written.
 		const FString Text = Context.EntryConditions.IsValidIndex(Entry) ? Context.EntryConditions[Entry] : FString();
 		Condition = SNew(STextBlock)
-			.Text(Text.IsEmpty() ? LOCTEXT("EntryRow_Always", "Always") : FText::FromString(Text))
+			.Text(Context.DefaultEntry == Entry ? LOCTEXT("EntryRow_Default", "Default") : Text.IsEmpty() ? LOCTEXT("EntryRow_Always", "Always") : FText::FromString(Text))
 			.ColorAndOpacity(Text.IsEmpty() ? BangoYapColor::Gray : BangoYapColor::LightGray);
 	}
 
@@ -508,6 +508,7 @@ TSharedRef<SWidget> SBangoYapEntryRow::Make(const FBangoNodeDecoratorContext& Co
 		.Data(FBangoYapBlockData::FromContext(Context))
 		.Entry(Entry)
 		.ConditionWidget(Condition)
+		.bDefault(Context.DefaultEntry == Entry)
 		.bDisabled(Context.EntryDisabled.IsValidIndex(Entry) && Context.EntryDisabled[Entry])
 		.bHasDebug(Context.bHasEntryDebug)
 		.bDebugPassed(!Context.bHasEntryDebug || (Context.DebugEntryPassed.IsValidIndex(Entry) && Context.DebugEntryPassed[Entry]))
@@ -523,11 +524,29 @@ void SBangoYapEntryRow::Construct(const FArguments& InArgs)
 	const bool bPrompt = Data.Kind == EBangoYapBlockKind::Prompt;
 	const int32 Mode = GetRunMode(Data.RunMode);
 
-	// The badge: the entry's number, in the run mode's colour (a prompt's options in Yap's prompt title colour).
-	const FLinearColor BadgeColor = bPrompt ? BangoYapColor::YellowGray : SequencingColor(Mode);
+	// The badge: the entry's number, in the run mode's colour (a prompt's options in Yap's prompt title colour); the
+	// default's a grey "D", as it's Yap's last pin, for when nothing else can be used.
+	const bool bDefault = InArgs._bDefault;
+	const FLinearColor BadgeColor = bDefault ? BangoYapColor::Gray : bPrompt ? BangoYapColor::YellowGray : SequencingColor(Mode);
+	const FText BadgeText = bDefault ? LOCTEXT("EntryRow_DefaultBadge", "D") : FText::AsNumber(Entry + 1);
 
 	FText BadgeToolTip;
-	if (bPrompt)
+	if (bDefault)
+	{
+		if (bPrompt)
+		{
+			BadgeToolTip = LOCTEXT("EntryRow_PromptDefault", "The default option: shown only while no other option is.");
+		}
+		else if (Mode == RunAll)
+		{
+			BadgeToolTip = LOCTEXT("EntryRow_RunAllDefault", "The default: plays only if no other entry has played.");
+		}
+		else
+		{
+			BadgeToolTip = LOCTEXT("EntryRow_ChooseDefault", "The default: plays if no other entry's condition holds.");
+		}
+	}
+	else if (bPrompt)
 	{
 		BadgeToolTip = LOCTEXT("EntryRow_Prompt", "An option: its AddPrompt is shown while its condition holds (watched while the player chooses).");
 	}
@@ -584,7 +603,7 @@ void SBangoYapEntryRow::Construct(const FArguments& InArgs)
 							.Padding(0)
 							[
 								SNew(STextBlock)
-								.Text(FText::AsNumber(Entry + 1))
+								.Text(BadgeText)
 								.Font(FCoreStyle::GetDefaultFontStyle("Bold", 9))
 								.ColorAndOpacity(BangoYapColor::White)
 							]
