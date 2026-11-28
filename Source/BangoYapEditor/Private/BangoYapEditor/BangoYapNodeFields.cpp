@@ -541,7 +541,9 @@ BangoYapEditor::FSettingValue BangoYapEditor::ReadSetting(const FBangoNodeLayout
 
 FString BangoYapEditor::GetSettingDefineName(ELineSetting Setting, int32 Value)
 {
-	const FString* Name = BangoYapEditorPrivate::GetDefineNames(Setting).Find(Value);
+	// Kept in a local: Find points into the map, which must outlive the copy made from it.
+	const TMap<int32, FString> Names = BangoYapEditorPrivate::GetDefineNames(Setting);
+	const FString* Name = Names.Find(Value);
 	return Name ? *Name : FString();
 }
 

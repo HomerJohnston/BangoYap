@@ -118,6 +118,20 @@ public:
 
 	void Construct(const FArguments& InArgs);
 
-	/** The row for entry Entry of the node in Context (a Speech's or a Prompt's). */
+	/**
+	 * A Speech's or Prompt's rows area (Bango v0.144, IBangoNodeDecorator::MakeRowsArea): a row per entry (MakeRow),
+	 * then buttons to add an entry and the default. Must be made in MakeRowsArea (the pins are placed there).
+	 */
+	static TSharedRef<SWidget> MakeRowsArea(const struct FBangoNodeDecoratorContext& Context);
+
+	/**
+	 * Entry Entry's row, the rows area's whole width: the badge and condition (an SBangoYapEntryRow), with, on hover,
+	 * buttons to move, disable and remove the entry, and its pin at the right end, on the node's edge; then, for an
+	 * entry drawn in its row, its lines or options (SBangoYapEntryStatements), each option's pin on the edge too. An
+	 * entry drawn in its row has nothing wired to its own pin, so it's placed but hidden.
+	 */
+	static TSharedRef<SWidget> MakeRow(const struct FBangoNodeDecoratorContext& Context, int32 Entry);
+
+	/** The badge and condition alone. */
 	static TSharedRef<SWidget> Make(const struct FBangoNodeDecoratorContext& Context, int32 Entry);
 };

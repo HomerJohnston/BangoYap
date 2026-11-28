@@ -5,6 +5,9 @@
 #include "SBangoYapLineRow.h"
 #include "YapBase/YapCharacterAsset.h"
 
+#include "Widgets/SBoxPanel.h"
+#include "Widgets/SNullWidget.h"
+
 #define LOCTEXT_NAMESPACE "BangoYapEditor"
 
 using namespace BangoYapEditor;
@@ -95,10 +98,22 @@ TOptional<FText> FBangoYapLineDecorator::GetTooltip(const FBangoNodeDecoratorCon
 	return LOCTEXT("ToolTip_Say", "A line of dialogue. In a Speech block, one of its lines; on its own, as if in Speech(RUN_ALL).");
 }
 
-TSharedPtr<SWidget> FBangoYapLineDecorator::MakeExtraContent(const FBangoNodeDecoratorContext& Context)
+TSharedPtr<SWidget> FBangoYapLineDecorator::MakeFieldsArea(const FBangoNodeDecoratorContext& Context)
 {
-	return SNew(SBangoYapLineRow)
-		.Data(FBangoYapLineData::FromContext(Context));
+	// The fields the row doesn't cover (HidesField: expressions it can't edit; none shown takes no room), then the row.
+	return SNew(SVerticalBox)
+		+ SVerticalBox::Slot()
+		.AutoHeight()
+		[
+			Context.MakeDefaultFieldsArea ? Context.MakeDefaultFieldsArea() : SNullWidget::NullWidget
+		]
+		+ SVerticalBox::Slot()
+		.AutoHeight()
+		.Padding(2.0f, 4.0f, 2.0f, 2.0f)
+		[
+			SNew(SBangoYapLineRow)
+			.Data(FBangoYapLineData::FromContext(Context))
+		];
 }
 
 bool FBangoYapLineDecorator::HidesField(const FBangoNodeDecoratorContext& Context, int32 FieldIndex) const

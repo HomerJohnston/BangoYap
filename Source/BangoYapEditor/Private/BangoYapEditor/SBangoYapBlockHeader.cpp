@@ -505,7 +505,7 @@ TSharedRef<SWidget> SBangoYapEntryRow::Make(const FBangoNodeDecoratorContext& Co
 			.ColorAndOpacity(Text.IsEmpty() ? BangoYapColor::Gray : BangoYapColor::LightGray);
 	}
 
-	TSharedRef<SWidget> Row = SNew(SBangoYapEntryRow)
+	return SNew(SBangoYapEntryRow)
 		.Data(FBangoYapBlockData::FromContext(Context))
 		.Entry(Entry)
 		.ConditionWidget(Condition)
@@ -514,22 +514,219 @@ TSharedRef<SWidget> SBangoYapEntryRow::Make(const FBangoNodeDecoratorContext& Co
 		.bHasDebug(Context.bHasEntryDebug)
 		.bDebugPassed(!Context.bHasEntryDebug || (Context.DebugEntryPassed.IsValidIndex(Entry) && Context.DebugEntryPassed[Entry]))
 		.bDebugRunning(Context.bHasEntryDebug && Context.DebugRunningEntry == Entry);
+}
 
-	// An entry drawn in its row (DrawsEntryStatements): its lines or options under its condition.
-	if (!Context.EntryDrawsStatements.IsValidIndex(Entry) || !Context.EntryDrawsStatements[Entry])
+namespace BangoYapEntryRowPrivate
+{
+	TSharedRef<SWidget> MakeEntryTool(const FName& Icon, const FText& ToolTipText, TFunction<void()> OnClicked, bool bEnabled)
 	{
-		return Row;
+		return SNew(SButton)
+			.ButtonStyle(FAppStyle::Get(), "SimpleButton")
+			.ContentPadding(FMargin(1, 0))
+			.IsEnabled(bEnabled)
+			.ToolTipText(ToolTipText)
+			.OnClicked_Lambda([OnClicked]()
+			{
+				OnClicked();
+				return FReply::Handled();
+			})
+			[
+				SNew(SImage)
+				.Image(FAppStyle::GetBrush(Icon))
+				.DesiredSizeOverride(FVector2D(12, 12))
+				.ColorAndOpacity(FSlateColor::UseForeground())
+			];
 	}
+
+	TSharedRef<SWidget> MakeAddButton(const FText& Label, const FText& Tip, TFunction<void()> OnClicked)
+	{
+		return SNew(SButton)
+			.ButtonStyle(FAppStyle::Get(), "SimpleButton")
+			.ContentPadding(FMargin(4, 1))
+			.ToolTipText(Tip)
+			.OnClicked_Lambda([OnClicked]()
+			{
+				OnClicked();
+				return FReply::Handled();
+			})
+			[
+				SNew(SHorizontalBox)
+				+ SHorizontalBox::Slot()
+				.AutoWidth()
+				.VAlign(VAlign_Center)
+				.Padding(0, 0, 3, 0)
+				[
+					SNew(SImage)
+					.Image(FAppStyle::GetBrush("Icons.Plus"))
+					.DesiredSizeOverride(FVector2D(10, 10))
+					.ColorAndOpacity(BangoYapColor::LightGray)
+				]
+				+ SHorizontalBox::Slot()
+				.AutoWidth()
+				.VAlign(VAlign_Center)
+				[
+					SNew(STextBlock)
+					.Text(Label)
+					.Font(FCoreStyle::GetDefaultFontStyle("Regular", 8))
+					.ColorAndOpacity(BangoYapColor::LightGray)
+				]
+			];
+	}
+}
+
+TSharedRef<SWidget> SBangoYapEntryRow::MakeRowsArea(const FBangoNodeDecoratorContext& Context)
+{
+	using namespace BangoYapEntryRowPrivate;
+
+	TSharedRef<SVerticalBox> Rows = SNew(SVerticalBox);
+	for (int32 Entry = 0; Entry < Context.EntryConditions.Num(); ++Entry)
+	{
+		Rows->AddSlot()
+		.AutoHeight()
+		.Padding(0, 2)
+		[
+			MakeRow(Context, Entry)
+		];
+	}
+
+	// Adding entries (the output column has no Add pin button with a rows area).
+	const bool bPrompt = Context.CommandName == TEXT("Prompt");
+	TSharedRef<SHorizontalBox> AddButtons = SNew(SHorizontalBox);
+	if (Context.AddEntry)
+	{
+		TFunction<void()> AddEntry = Context.AddEntry;
+		AddButtons->AddSlot()
+		.AutoWidth()
+		[
+			MakeAddButton(LOCTEXT("AddEntry", "Entry"),
+				bPrompt ? LOCTEXT("AddEntryTip_Prompt", "Add an entry, above the default: a condition, and the options shown while it holds.")
+					: LOCTEXT("AddEntryTip_Speech", "Add an entry, above the default: a condition, and the lines said when it's chosen."),
+				[AddEntry]() { AddEntry(); })
+		];
+	}
+	if (Context.AddDefaultEntry && Context.bCanAddDefaultEntry)
+	{
+		TFunction<void()> AddDefault = Context.AddDefaultEntry;
+		AddButtons->AddSlot()
+		.AutoWidth()
+		.Padding(4, 0, 0, 0)
+		[
+			MakeAddButton(LOCTEXT("AddDefault", "Default (bypass)"),
+				bPrompt ? LOCTEXT("AddDefaultTip_Prompt", "Add the default: the bypass, run instead of the prompt when no option can be shown. Wire what it does to its pin.")
+					: LOCTEXT("AddDefaultTip_Speech", "Add the default: the bypass, run when no entry can play. Wire what it does to its pin."),
+				[AddDefault]() { AddDefault(); })
+		];
+	}
+	Rows->AddSlot()
+	.AutoHeight()
+	.Padding(Bango::NodePins::EdgeInset + 4.0f, 2.0f, Bango::NodePins::EdgeInset, 4.0f)
+	[
+		AddButtons
+	];
+	return Rows;
+}
+
+TSharedRef<SWidget> SBangoYapEntryRow::MakeRow(const FBangoNodeDecoratorContext& Context, int32 Entry)
+{
+	using namespace BangoYapEntryRowPrivate;
+
+	const bool bInRow = Context.EntryDrawsStatements.IsValidIndex(Entry) && Context.EntryDrawsStatements[Entry];
+	const bool bDefault = Context.DefaultEntry == Entry;
 	const bool bEntryDisabled = Context.EntryDisabled.IsValidIndex(Entry) && Context.EntryDisabled[Entry];
+	const int32 Count = Context.EntryConditions.Num();
+	const int32 LastMovable = Context.DefaultEntry != INDEX_NONE ? Context.DefaultEntry - 1 : Count - 1;
+
+	// The entry's own pin: wired to its nodes for the default (and any entry drawn as nodes); an entry drawn in its
+	// row has nothing wired to it, so it's placed here but hidden (left out, it would go in the output column).
+	TSharedRef<SWidget> EntryPin = Context.MakePinWidget
+		? Context.MakePinWidget(bDefault ? Bango::NodePins::Default : Bango::NodePins::Entry(Entry))
+		: SNullWidget::NullWidget;
+
+	// The entry's buttons, shown while the pointer's over its condition row.
+	TSharedRef<SHorizontalBox> Tools = SNew(SHorizontalBox);
+	if (!bDefault && Context.MoveEntry)
+	{
+		TFunction<void(int32, int32)> MoveEntry = Context.MoveEntry;
+		Tools->AddSlot().AutoWidth()
+		[
+			MakeEntryTool(TEXT("Icons.ChevronUp"), LOCTEXT("Entry_Up", "Move the entry up"), [MoveEntry, Entry]() { MoveEntry(Entry, -1); }, Entry > 0)
+		];
+		Tools->AddSlot().AutoWidth()
+		[
+			MakeEntryTool(TEXT("Icons.ChevronDown"), LOCTEXT("Entry_Down", "Move the entry down"), [MoveEntry, Entry]() { MoveEntry(Entry, 1); }, Entry < LastMovable)
+		];
+	}
+	if (Context.SetEntryDisabled)
+	{
+		TFunction<void(int32, bool)> SetEntryDisabled = Context.SetEntryDisabled;
+		Tools->AddSlot().AutoWidth()
+		[
+			MakeEntryTool(bEntryDisabled ? TEXT("Icons.Hidden") : TEXT("Icons.Visible"),
+				bEntryDisabled ? LOCTEXT("Entry_Enable", "Enable the entry") : LOCTEXT("Entry_Disable", "Disable the entry (it's left out)"),
+				[SetEntryDisabled, Entry, bEntryDisabled]() { SetEntryDisabled(Entry, !bEntryDisabled); }, true)
+		];
+	}
+	if (Context.RemoveEntry)
+	{
+		TFunction<void(int32)> RemoveEntry = Context.RemoveEntry;
+		Tools->AddSlot().AutoWidth()
+		[
+			MakeEntryTool(TEXT("Icons.Delete"), bInRow ? LOCTEXT("Entry_RemoveInRow", "Remove the entry, with its lines or options") : LOCTEXT("Entry_Remove", "Remove the entry (its wire goes; the nodes on it stay)"),
+				[RemoveEntry, Entry]() { RemoveEntry(Entry); }, true)
+		];
+	}
+
+	TSharedPtr<SBox> ConditionRow;
+	const TSharedRef<SWidget> Header = SAssignNew(ConditionRow, SBox)
+		[
+			SNew(SHorizontalBox)
+			+ SHorizontalBox::Slot()
+			.FillWidth(1.0f)
+			.Padding(Bango::NodePins::EdgeInset, 0, 4, 0)
+			[
+				Make(Context, Entry)
+			]
+			+ SHorizontalBox::Slot()
+			.AutoWidth()
+			.VAlign(VAlign_Center)
+			.Padding(0, 0, 4, 0)
+			[
+				Tools
+			]
+			+ SHorizontalBox::Slot()
+			.AutoWidth()
+			.VAlign(VAlign_Center)
+			[
+				// Hidden, not collapsed: it keeps its room, so this row's right end lines up with its options' pins.
+				SNew(SBox)
+				.Visibility(bInRow ? EVisibility::Hidden : EVisibility::Visible)
+				[
+					EntryPin
+				]
+			]
+		];
+	const TWeakPtr<SBox> WeakRow = ConditionRow;
+	Tools->SetVisibility(TAttribute<EVisibility>::CreateLambda([WeakRow]()
+	{
+		const TSharedPtr<SBox> Pinned = WeakRow.Pin();
+		return Pinned.IsValid() && Pinned->IsHovered() ? EVisibility::Visible : EVisibility::Hidden;
+	}));
+
+	if (!bInRow)
+	{
+		return Header;
+	}
+
+	// Its lines or options under it, indented; their pins (an option's) on the node's right edge.
 	return SNew(SVerticalBox)
 		+ SVerticalBox::Slot()
 		.AutoHeight()
 		[
-			Row
+			Header
 		]
 		+ SVerticalBox::Slot()
 		.AutoHeight()
-		.Padding(8, 2, 0, 6)
+		.Padding(Bango::NodePins::EdgeInset + 12.0f, 2.0f, 0.0f, 4.0f)
 		[
 			SNew(SBox)
 			.RenderOpacity(bEntryDisabled ? 0.4f : 1.0f)

@@ -10,7 +10,7 @@ struct FBangoNodeDecoratorContext;
  * IBangoNodeDecorator::DrawsEntryStatements) rather than as nodes wired from its pin: each statement is an
  * SBangoYapLineRow, as its own node would be (it edits the line in place), with, on hover, buttons to move it up or
  * down (into the entry before or after at the ends), disable it and remove it; an AddPrompt's output pin (to its
- * block) sits at its right. Under them, buttons to add a line (Say), a mature line (SayM) or an option (AddPrompt).
+ * block) is at its right end, on the node's edge (Bango v0.144, MakePinWidget). Under them, buttons to add a line (Say), a mature line (SayM) or an option (AddPrompt).
  *
  * A disabled statement is faded; a statement's comment is its tooltip; an error gives it a red outline (the error's
  * in the tooltip). While the debugger follows a copy of the script at one of them, it has Yap's fragment highlight; a
@@ -24,7 +24,7 @@ public:
 	SLATE_BEGIN_ARGS(SBangoYapEntryStatements) {}
 	SLATE_END_ARGS()
 
-	/** Must be made in MakeEntryRowWidget (the statements' pins are made there). */
+	/** Must be made in MakeRowsArea (the statements' pins are placed there, at the rows' right ends: the node's edge). */
 	void Construct(const FArguments& InArgs, const FBangoNodeDecoratorContext& Context, int32 InEntry);
 
 private:

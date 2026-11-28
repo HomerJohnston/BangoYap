@@ -114,10 +114,16 @@ TSharedRef<SWidget> SBangoYapEntryStatements::MakeStatement(const FBangoNodeDeco
 	const bool bCanUp = Index > 0 || (EntryDraws.IsValidIndex(Entry - 1) && EntryDraws[Entry - 1]);
 	const bool bCanDown = Index < StatementCounts[Entry] - 1 || (EntryDraws.IsValidIndex(Entry + 1) && EntryDraws[Entry + 1]);
 
+	// An option's pin (to its block), at the row's right end, on the node's edge. A line has none: a space its size
+	// keeps the lines lined up with the options.
 	TSharedPtr<SWidget> Pin;
-	if (Statement.bBlock && Context.MakeEntryStatementPinWidget)
+	if (Statement.bBlock && Context.MakePinWidget)
 	{
-		Pin = Context.MakeEntryStatementPinWidget(Entry, Index);
+		Pin = Context.MakePinWidget(Bango::NodePins::Statement(Entry, Index));
+	}
+	if (!Pin.IsValid())
+	{
+		Pin = SNew(SBox).WidthOverride(Bango::NodePins::EdgeInset * 2.0f);
 	}
 
 	TSharedPtr<SBorder> Holder;
@@ -182,7 +188,7 @@ TSharedRef<SWidget> SBangoYapEntryStatements::MakeStatement(const FBangoNodeDeco
 				.VAlign(VAlign_Center)
 				.Padding(4, 0, 0, 0)
 				[
-					Pin.IsValid() ? Pin.ToSharedRef() : SNullWidget::NullWidget
+					Pin.ToSharedRef()
 				]
 			]
 		]

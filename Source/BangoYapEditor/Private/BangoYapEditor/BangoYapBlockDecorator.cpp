@@ -1,6 +1,9 @@
 #include "BangoYapBlockDecorator.h"
 
+#include "BangoYapNodeFields.h"
 #include "SBangoYapBlockHeader.h"
+#include "Widgets/SBoxPanel.h"
+#include "Widgets/SNullWidget.h"
 
 #define LOCTEXT_NAMESPACE "BangoYapEditor"
 
@@ -40,15 +43,32 @@ TOptional<FText> FBangoYapBlockDecorator::GetTooltip(const FBangoNodeDecoratorCo
 	return LOCTEXT("BlockToolTip_Speech", "A group of lines, said one after another (run all), or one of them (select one, select random). In a Conversation, part of it; otherwise free speech.");
 }
 
-TSharedPtr<SWidget> FBangoYapBlockDecorator::MakeExtraContent(const FBangoNodeDecoratorContext& Context)
+TSharedPtr<SWidget> FBangoYapBlockDecorator::MakeFieldsArea(const FBangoNodeDecoratorContext& Context)
 {
-	return SNew(SBangoYapBlockHeader)
-		.Data(FBangoYapBlockData::FromContext(Context));
+	// The fields the header doesn't cover (HidesField: expressions it can't edit; none shown takes no room), then the header.
+	return SNew(SVerticalBox)
+		+ SVerticalBox::Slot()
+		.AutoHeight()
+		[
+			Context.MakeDefaultFieldsArea ? Context.MakeDefaultFieldsArea() : SNullWidget::NullWidget
+		]
+		+ SVerticalBox::Slot()
+		.AutoHeight()
+		.Padding(2.0f, 4.0f, 2.0f, 2.0f)
+		[
+			SNew(SBangoYapBlockHeader)
+			.Data(FBangoYapBlockData::FromContext(Context))
+		];
 }
 
-TSharedPtr<SWidget> FBangoYapBlockDecorator::MakeEntryRowWidget(const FBangoNodeDecoratorContext& Context, int32 Entry)
+TSharedPtr<SWidget> FBangoYapBlockDecorator::MakeRowsArea(const FBangoNodeDecoratorContext& Context)
 {
-	return SBangoYapEntryRow::Make(Context, Entry);
+	const bool bHoldsLines = Context.CommandName == TEXT("Speech") || Context.CommandName == TEXT("Prompt");
+	if (!bHoldsLines || !Context.bEntries)
+	{
+		return nullptr; // a plain block, or a Conversation: drawn as usual
+	}
+	return SBangoYapEntryRow::MakeRowsArea(Context);
 }
 
 bool FBangoYapBlockDecorator::DrawsEntryStatements(const FBangoNodeDecoratorContext& Context, int32 Entry) const
