@@ -51,6 +51,12 @@ TSharedPtr<SWidget> FBangoYapBlockDecorator::MakeEntryRowWidget(const FBangoNode
 	return SBangoYapEntryRow::Make(Context, Entry);
 }
 
+bool FBangoYapBlockDecorator::DrawsEntryStatements(const FBangoNodeDecoratorContext& Context, int32 Entry) const
+{
+	const bool bHoldsLines = Context.CommandName == TEXT("Speech") || Context.CommandName == TEXT("Prompt");
+	return bHoldsLines && Entry != Context.DefaultEntry;
+}
+
 bool FBangoYapBlockDecorator::HidesField(const FBangoNodeDecoratorContext& Context, int32 FieldIndex) const
 {
 	return FBangoYapBlockData::HeaderCoversField(Context, FieldIndex);

@@ -719,8 +719,10 @@ namespace BangoYapPrivate
 			.Param(TEXT("Advance"), FBangoType::Int(), TEXT("Conversations: 1 auto, 2 manual; nil: the config's")).MayBeNil()
 			.Block()
 			.Entries(/*bOptional*/ true)
+			.EntriesHold({ TEXT("Say"), TEXT("SayM") }, /*bMany*/ true)
+			.DefaultHoldsAnything()
 			.InCategory(Category)
-			.Describe(TEXT("A group of lines, said one after another (run all), or one of them (select one, select random). In a Conversation block, they're part of the conversation; otherwise free speech. Its block can be a list of entries (entry if (condition): / entry:), each a line or several: run all plays each entry that passes, select one the first, select random one of them."));
+			.Describe(TEXT("A group of lines, said one after another (run all), or one of them (select one, select random). In a Conversation block, they're part of the conversation; otherwise free speech. Its block can be a list of entries (entry if (condition): / entry:), each holding only Say and SayM lines: run all plays each entry that passes, select one the first, select random one of them. A default: (the bypass) runs when none can, and holds anything (a goto, say)."));
 
 		Command.Start = [](FBangoCommandCall& Call)
 		{
@@ -1161,6 +1163,22 @@ namespace BangoYapPrivate
 	// Prompt(Config) { ... } and Speaker AddPrompt(Text, TitleText, ...) { ... }
 
 	/** Shows the prompt (again, after a load), waits for the player's choice, then says the chosen entry and runs its block. */
+	/** The block's default entry (default:, its bypass), or INDEX_NONE. */
+	static int32 FindDefaultEntry(const FBangoCommandCall& Call)
+	{
+		for (int32 Index = 0; Index < Call.GetEntryCount(); ++Index)
+		{
+			if (Call.EntryIsDefault(Index))
+			{
+				return Index;
+			}
+		}
+		return INDEX_NONE;
+	}
+
+	/** A prompt's Phase once it has taken its bypass (run its default): nothing more to show or say. */
+	static constexpr int32 PromptBypassed = 3;
+
 	static EBangoCommandResult DrivePrompt(FBangoCommandCall& Call, TArray<FFields>& Rows)
 	{
 		UYapSubsystem* Yap = GetYap(Call);
@@ -1184,14 +1202,39 @@ namespace BangoYapPrivate
 			FYapPromptHandle Prompt = FYapPromptHandle::FromString(Header.PromptHandle);
 			int32 Chosen = INDEX_NONE;
 
+			// The bypass (the default entry), when no option can be shown: the prompt goes, and the default runs instead.
+			const int32 DefaultEntry = Header.bEntries ? FindDefaultEntry(Call) : INDEX_NONE;
+			auto TakeBypass = [&]()
+			{
+				if (Prompt.IsValid())
+				{
+					Yap->CancelPrompt(Prompt);
+				}
+				Header.PromptHandle.Reset();
+				Header.Phase = PromptBypassed;
+				Rows[0] = Header.ToFields();
+				Call.WatchEntries(false);
+				Call.RunEntry(DefaultEntry);
+				return EBangoCommandResult::Done;
+			};
+
 			// Watched entries changed while the player chooses: show the options that have come true, hide the rest.
 			if (Header.bEntries && Call.bEntriesChanged && Prompt.IsValid() && Yap->GetPromptChoice(Prompt, Chosen) && Chosen == INDEX_NONE)
 			{
+				bool bAnyShown = false;
 				for (int32 Row = 1; Row < Rows.Num(); ++Row)
 				{
 					FLineRecord Entry;
 					Entry.FromFields(Rows[Row]);
-					Yap->SetPromptEntryShown(Prompt, Row - 1, RowShown(Entry));
+					const bool bShown = RowShown(Entry);
+					bAnyShown |= bShown;
+					Yap->SetPromptEntryShown(Prompt, Row - 1, bShown);
+				}
+
+				// Every option stopped holding: take the bypass.
+				if (!bAnyShown && DefaultEntry != INDEX_NONE)
+				{
+					return TakeBypass();
 				}
 			}
 
@@ -1232,9 +1275,13 @@ namespace BangoYapPrivate
 					}
 				}
 
-				// Every option's condition is false for now: wait for one to come true.
+				// Every option's condition is false for now: the bypass, if there is one; otherwise wait for one to come true.
 				if (Request.HiddenEntries.Num() == Request.Entries.Num())
 				{
+					if (DefaultEntry != INDEX_NONE)
+					{
+						return TakeBypass();
+					}
 					Rows[0] = Header.ToFields();
 					return EBangoCommandResult::Pending;
 				}
@@ -1318,9 +1365,10 @@ namespace BangoYapPrivate
 			.Param(TEXT("Config"), FBangoType::String(), TEXT("The speech config's name; nil: the project's default")).MayBeNil()
 			.Block()
 			.Entries(/*bOptional*/ true)
-			.EntriesHold(TEXT("AddPrompt"))
+			.EntriesHold({ TEXT("AddPrompt") }, /*bMany*/ true)
+			.DefaultHoldsAnything()
 			.InCategory(Category)
-			.Describe(TEXT("Shows the player the AddPrompts reached in its block, and waits for their choice: the chosen one is said, then its block runs. Must be in a conversation. With none reached, does nothing. Its block can be a list of entries (entry if (condition): / entry:), each holding one AddPrompt: an option is shown while its condition holds, even if it comes true while the player chooses."));
+			.Describe(TEXT("Shows the player the AddPrompts reached in its block, and waits for their choice: the chosen one is said, then its block runs. Must be in a conversation. With none reached, does nothing. Its block can be a list of entries (entry if (condition): / entry:), each holding only AddPrompt options: an entry's options are shown while its condition holds, even if it comes true while the player chooses. A default: (the bypass) runs instead when no option can be shown, at the start or later, and holds anything (a goto out of the conversation, say)."));
 
 		Command.Start = [](FBangoCommandCall& Call)
 		{
@@ -1338,12 +1386,19 @@ namespace BangoYapPrivate
 				return Call.Fail(TEXT("A Prompt must be in a Conversation block."));
 			}
 
-			// A list of entries: every one runs, passed or not, so each AddPrompt is gathered (and is there to show if
-			// its condition comes true while the player chooses).
+			// A list of entries: every one but the default runs, passed or not, so each AddPrompt is gathered (and is there
+			// to show if its condition comes true while the player chooses). The default is the bypass: with no other
+			// entry passing at the start, it runs instead, and nothing is gathered.
 			if (Call.HasEntries())
 			{
 				Header.bEntries = true;
-				if (Call.GetEntryCount() > 0)
+				const int32 DefaultEntry = FindDefaultEntry(Call);
+				if (DefaultEntry != INDEX_NONE && Call.EntryPassed(DefaultEntry))
+				{
+					Header.Phase = PromptBypassed;
+					Call.RunEntry(DefaultEntry);
+				}
+				else if (Call.GetEntryCount() > 0 && !Call.EntryIsDefault(0))
 				{
 					Call.RunEntry(0);
 				}
@@ -1355,9 +1410,23 @@ namespace BangoYapPrivate
 
 		Command.EntryEnded = [](FBangoCommandCall& Call)
 		{
-			if (Call.EntryNumber + 1 < Call.GetEntryCount())
+			// The bypass ran (from Start): nothing to gather or show.
+			TArray<FFields> Rows;
+			if (ValueToRows(*Call.BlockState, Rows))
 			{
-				Call.RunEntry(Call.EntryNumber + 1);
+				FPromptHeader Header;
+				Header.FromFields(Rows[0]);
+				if (Header.Phase == PromptBypassed)
+				{
+					return EBangoCommandResult::Done;
+				}
+			}
+
+			// Gathering: the next entry, but not the default.
+			const int32 Next = Call.EntryNumber + 1;
+			if (Next < Call.GetEntryCount() && !Call.EntryIsDefault(Next))
+			{
+				Call.RunEntry(Next);
 			}
 			return EBangoCommandResult::Done;
 		};
@@ -1365,16 +1434,21 @@ namespace BangoYapPrivate
 		Command.Close = [](FBangoCommandCall& Call)
 		{
 			TArray<FFields> Rows;
-			if (Call.bLeftEarly || !ValueToRows(*Call.BlockState, Rows) || Rows.Num() < 2)
+			if (Call.bLeftEarly || !ValueToRows(*Call.BlockState, Rows))
 			{
-				return EBangoCommandResult::Done; // left early, or no entry was reached
+				return EBangoCommandResult::Done; // left early
 			}
 
 			FPromptHeader Header;
 			Header.FromFields(Rows[0]);
+			if (Header.Phase == PromptBypassed)
+			{
+				return EBangoCommandResult::Done; // the bypass has run
+			}
+
 			if (Header.bEntries)
 			{
-				// As without entries, a prompt with no option to show at the start does nothing.
+				// No option to show at the start: the bypass, if there is one; otherwise, as without entries, nothing.
 				bool bAnyShown = false;
 				for (int32 Row = 1; Row < Rows.Num() && !bAnyShown; ++Row)
 				{
@@ -1384,11 +1458,23 @@ namespace BangoYapPrivate
 				}
 				if (!bAnyShown)
 				{
+					const int32 DefaultEntry = FindDefaultEntry(Call);
+					if (DefaultEntry != INDEX_NONE)
+					{
+						Header.Phase = PromptBypassed;
+						Rows[0] = Header.ToFields();
+						*Call.BlockState = RowsToValue(Rows);
+						Call.RunEntry(DefaultEntry);
+					}
 					return EBangoCommandResult::Done;
 				}
 
 				// Watch the conditions while the player chooses.
 				Call.WatchEntries(true);
+			}
+			else if (Rows.Num() < 2)
+			{
+				return EBangoCommandResult::Done; // no entry was reached
 			}
 
 			const EBangoCommandResult Result = DrivePrompt(Call, Rows);

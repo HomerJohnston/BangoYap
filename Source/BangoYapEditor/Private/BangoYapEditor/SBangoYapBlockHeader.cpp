@@ -3,6 +3,7 @@
 #include "BangoNodeDecorator.h"
 #include "BangoYapEditorStyle.h"
 #include "BangoYapLineTiming.h"
+#include "SBangoYapEntryStatements.h"
 #include "SBangoYapLineSettings.h"
 #include "Framework/MultiBox/MultiBoxBuilder.h"
 #include "Styling/AppStyle.h"
@@ -504,7 +505,7 @@ TSharedRef<SWidget> SBangoYapEntryRow::Make(const FBangoNodeDecoratorContext& Co
 			.ColorAndOpacity(Text.IsEmpty() ? BangoYapColor::Gray : BangoYapColor::LightGray);
 	}
 
-	return SNew(SBangoYapEntryRow)
+	TSharedRef<SWidget> Row = SNew(SBangoYapEntryRow)
 		.Data(FBangoYapBlockData::FromContext(Context))
 		.Entry(Entry)
 		.ConditionWidget(Condition)
@@ -513,6 +514,29 @@ TSharedRef<SWidget> SBangoYapEntryRow::Make(const FBangoNodeDecoratorContext& Co
 		.bHasDebug(Context.bHasEntryDebug)
 		.bDebugPassed(!Context.bHasEntryDebug || (Context.DebugEntryPassed.IsValidIndex(Entry) && Context.DebugEntryPassed[Entry]))
 		.bDebugRunning(Context.bHasEntryDebug && Context.DebugRunningEntry == Entry);
+
+	// An entry drawn in its row (DrawsEntryStatements): its lines or options under its condition.
+	if (!Context.EntryDrawsStatements.IsValidIndex(Entry) || !Context.EntryDrawsStatements[Entry])
+	{
+		return Row;
+	}
+	const bool bEntryDisabled = Context.EntryDisabled.IsValidIndex(Entry) && Context.EntryDisabled[Entry];
+	return SNew(SVerticalBox)
+		+ SVerticalBox::Slot()
+		.AutoHeight()
+		[
+			Row
+		]
+		+ SVerticalBox::Slot()
+		.AutoHeight()
+		.Padding(8, 2, 0, 6)
+		[
+			SNew(SBox)
+			.RenderOpacity(bEntryDisabled ? 0.4f : 1.0f)
+			[
+				SNew(SBangoYapEntryStatements, Context, Entry)
+			]
+		];
 }
 
 void SBangoYapEntryRow::Construct(const FArguments& InArgs)
@@ -535,7 +559,7 @@ void SBangoYapEntryRow::Construct(const FArguments& InArgs)
 	{
 		if (bPrompt)
 		{
-			BadgeToolTip = LOCTEXT("EntryRow_PromptDefault", "The default option: shown only while no other option is.");
+			BadgeToolTip = LOCTEXT("EntryRow_PromptDefault", "The default: the bypass. It runs instead of the prompt when no option can be shown, at the start or while the player chooses.");
 		}
 		else if (Mode == RunAll)
 		{
@@ -548,7 +572,7 @@ void SBangoYapEntryRow::Construct(const FArguments& InArgs)
 	}
 	else if (bPrompt)
 	{
-		BadgeToolTip = LOCTEXT("EntryRow_Prompt", "An option: its AddPrompt is shown while its condition holds (watched while the player chooses).");
+		BadgeToolTip = LOCTEXT("EntryRow_Prompt", "An option entry: its AddPrompts are shown while its condition holds (watched while the player chooses).");
 	}
 	else
 	{
